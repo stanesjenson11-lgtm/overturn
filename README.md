@@ -43,7 +43,8 @@ policy's pre-existing-disease clause.
    cover at admission. Past sixty, a claim can't be contested for
    non-disclosure, only for established fraud, which the letter doesn't allege.
    Verdict: **likely challengeable**, citing the policy's own moratorium clause
-   `[P4]` and the regulation behind it `[R1]`.
+   (a `[P]` chip) and the regulation behind it, Schedule III §8 of the
+   Insurance Products Regulations (an `[R]` chip).
 3. **Download the appeal letter.** It's addressed to the insurer's grievance
    officer, quotes each clause it relies on, and comes with a second page of
    dates: when you can go to the Insurance Ombudsman (one month without a
@@ -117,6 +118,21 @@ tool result can never be forged from the client. The model is told that
 document text is data, and the eval includes a rejection letter carrying a
 prompt injection.
 
+Three more constraints, each added because an eval run caught the failure it
+prevents:
+
+- **A review must end in a decision.** In review mode the model is in
+  function-calling mode `ANY`, so it finishes with `record_verdict` or
+  `ask_questionnaire`, never with a conclusion buried in prose.
+- **It's briefed before it reasons.** A review opens with the whole rejection
+  letter and the IRDAI rules that govern its stated reason, plus anything
+  checkable in code (does the letter cite a clause?). Before this, it reached
+  correct verdicts without ever citing the regulator.
+- **Its tool inputs are grounded.** A date passed to `check_rules` must have
+  been stated by the policyholder or appear in the documents; `01/03/2019` and
+  "March 2019" count, a bare year doesn't. It once inferred a start date from
+  the year in a policy number. Now that's refused, and it asks instead.
+
 ### The appeal letter has no model call
 
 By the time there's a verdict, everything the letter needs is verified: the
@@ -135,7 +151,30 @@ policy ([eval/cases.jsonl](eval/cases.jsonl)): 8 that should be challengeable,
 7 that should be valid (one carrying a prompt injection), and 1 that should
 make the agent ask. It writes `eval/results.md`.
 
-EVAL_TABLE
+| Metric | Latest run (2026-10-05) | Notes |
+| --- | --- | --- |
+| Verdict accuracy | **16/16** | single run; earlier runs scored 11–14/16 (see below) |
+| False-hope rate | **0 of 7** | valid rejections called challengeable: 0 in every run |
+| Missed-rights rate | **0 of 8** | challengeable rejections called valid: 0 in every run |
+| Citation validity | **100%** | every `[P]`/`[R]` opens onto a passage the agent was given |
+| Cites the regulator | **88%** | challengeable verdicts backed by an IRDAI passage |
+| Groundedness | **91%** | LLM-as-judge (Gemma 4 31B), 10 of 11 judged; 5 not judged (judge 503/500) |
+| Key-terms accuracy | **13/13** | policy terms and letter facts, extracted and grounded |
+| Median review | 33s, 4 tool calls | free tier |
+
+**How it got there.** Each run's failures were traced and fixed in general,
+never per case, and every miss along the way was in the safe direction (asking,
+or declining to decide, never false hope):
+
+| Run | Verdicts | What the failures were | The general fix |
+| --- | --- | --- | --- |
+| 1 | 11/16 | concluded in prose without recording a verdict; asked for facts the user had given; no rule for the initial wait | a review must end in a tool call (function-calling mode `ANY`); stated facts are rule inputs; an `initial_waiting` rule |
+| 2 | 14/16 | correct, but **0%** of verdicts cited IRDAI; it decided from the policy in three steps | a review opens with a briefing: the whole letter and the governing regulations, retrieved before the first call |
+| 3 | 12/16 | inferred a start date from the year in a policy number, then counted months itself | **rule inputs are grounded**: a date must be stated by the user or appear in the documents, or `check_rules` refuses it |
+| 4 | 16/16 | none | |
+
+Sixteen cases on a free tier is a small, noisy sample: treat 16/16 as "the
+known failure modes are closed", not as a precision estimate.
 
 - **False-hope rate**: valid rejections called challengeable. The number this
   project exists to keep low.
@@ -213,7 +252,7 @@ npm run dev
 
 | Command | |
 | --- | --- |
-| `npm test` | 150+ tests, no external services (Postgres runs in-process via PGlite) |
+| `npm test` | 160 tests, no external services (Postgres runs in-process via PGlite) |
 | `npm run eval` | the 16 cases → `eval/results.md` (free tier; several minutes) |
 | `npm run scan-bench` | Gemma 4 vs Gemini on seeded scans → `eval/scan-results.md` |
 | `npm run ingest-regulations` | re-run after IRDAI revises a document; it replaces, never duplicates |
