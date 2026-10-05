@@ -1,7 +1,7 @@
 name: eval
 
-# Nightly, not per-push: the free tier's 15 req/min limit makes a full run take
-# a few minutes, and the numbers only move when the prompts, the chunker, or
+# Nightly, not per-push: on the free tier a full run takes several minutes,
+# and the numbers only move when the agent's prompt, its tools, the rules or
 # the retrieval change.
 on:
   schedule:
@@ -23,12 +23,15 @@ jobs:
 
       - run: npm ci
 
-      - name: Run the golden set
+      - name: Review the eval cases
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        # The regulations must be in the database before any case can cite
+        # them; re-ingesting is idempotent and picks up an IRDAI revision.
         run: |
-          npm run seed
+          npm run migrate
+          npm run ingest-regulations
           npm run eval
 
       - uses: actions/upload-artifact@v4
