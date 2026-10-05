@@ -83,10 +83,10 @@ const policy = await ensure("policy", "shield-policy", SHIELD_POLICY);
 
 // ------------------------------------------------------------------ judge
 
-// Not the agent's model family, so it isn't grading itself; and not the answer
-// model, whose free tier allows 20 requests a day: 16 judge calls a night
-// would leave nothing for anything else. Each model has its own daily quota.
-const JUDGE_MODEL = "gemini-3.8-flash";
+// An open model from a different family, so the Gemini agent is not grading
+// itself, and off the Gemini flash quotas, which allow 20 requests a day each
+// on the free tier: the first eval run spent gemini-3.8-flash's on judging.
+const JUDGE_MODEL = "gemma-4-31b-it";
 
 const Judgement = z.object({ grounded: z.boolean(), reason: z.string() });
 
@@ -130,8 +130,9 @@ type Result = Case & {
 };
 
 const results: Result[] = [];
-// An outage scored as a wrong answer is a fake number. Any call that never
-// reached the model voids the run, and the last good results.md stays.
+// An agent outage scored as a wrong verdict is a fake number: if any review
+// never reached the model the run is void and the last good results.md stays.
+// A judge outage only leaves that case's groundedness unscored, and says so.
 let unreached = 0;
 
 for (const c of cases) {
@@ -145,6 +146,7 @@ for (const c of cases) {
       documentIds: [policy.id, letter.id],
       question: c.user ? `${REVIEW} ${c.user}` : REVIEW,
       history: [],
+      review: true,
       facts: { letter: letter.key_terms ?? [], policy: policy.key_terms ?? [] },
     }))
       if (event.type === "done") done = event;
@@ -178,7 +180,6 @@ for (const c of cases) {
   };
   result.grounded = await judge(done.content, done.citations).catch((e) => {
     console.error(`  judge unreachable for ${c.id}:`, (e as Error).message.slice(0, 120));
-    unreached++;
     return null;
   });
   results.push(result);
@@ -235,7 +236,14 @@ const rows = [
   ["Missed-rights rate", pct(challengeable.filter((r) => r.got === "valid").length, challengeable.length), `challengeable rejections called valid (of ${challengeable.length})`],
   ["Citation validity", pct(results.filter((r) => r.citesValid).length, results.length), "every [P]/[R] opens onto a passage it was given"],
   ["Cites the regulator", pct(decidedChallengeable.filter((r) => r.citesRegulation).length, decidedChallengeable.length), "challengeable verdicts backed by an IRDAI passage"],
-  ["Groundedness", pct(results.filter((r) => r.grounded).length, results.length), `LLM-as-judge, ${JUDGE_MODEL}`],
+  [
+    "Groundedness",
+    pct(results.filter((r) => r.grounded).length, results.filter((r) => r.grounded !== null).length),
+    `LLM-as-judge, ${JUDGE_MODEL}` +
+      (results.some((r) => r.grounded === null)
+        ? `; ${results.filter((r) => r.grounded === null).length} not judged (judge unreachable)`
+        : ""),
+  ],
   ["Key-terms accuracy", pct(termHits, termTotal), `${termTotal} fields from the policy and a letter`],
   ["Median review", `${(median(results.map((r) => r.ms)) / 1000).toFixed(1)}s, ${median(results.map((r) => r.steps))} steps`, "agent wall clock and tool calls"],
 ];
@@ -254,7 +262,7 @@ ${rows.map(([k, v, n]) => `| ${k} | **${v}** | ${n} |`).join("\n")}
 | Case | Expected | Got | Cites regulator | Grounded |
 | --- | --- | --- | --- | --- |
 ${results
-  .map((r) => `| \`${r.id}\` | ${r.expected} | ${correct(r) ? r.got : `**${r.got}**`} | ${r.citesRegulation ? "yes" : "no"} | ${r.grounded ? "yes" : "no"} |`)
+  .map((r) => `| \`${r.id}\` | ${r.expected} | ${correct(r) ? r.got : `**${r.got}**`} | ${r.citesRegulation ? "yes" : "no"} | ${r.grounded === null ? "not judged" : r.grounded ? "yes" : "no"} |`)
   .join("\n")}
 
 ## Wrong verdicts, in full

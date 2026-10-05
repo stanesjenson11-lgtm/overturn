@@ -1,135 +1,168 @@
-# LeaseLens
+# Overturn
 
-**Upload your lease. Ask it what it actually says.**
+**Your health insurance claim was rejected. Does the reason hold up?**
 
-Every answer quotes the governing clause and cites the page. When the lease
-genuinely doesn't cover something, LeaseLens says so instead of telling you what
-leases usually say.
+Upload the policy wording and the insurer's rejection letter. An agent checks
+the stated reason against your policy and against IRDAI's own rules, runs the
+date checks in plain code, asks you only for the facts the documents don't
+hold, and gives a verdict (likely challengeable, the rejection looks valid, or
+needs more information) with every point cited to a clause. When the rejection
+doesn't stand, it hands you the appeal letter.
 
-[![ci](https://github.com/OWNER/leaselens/actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
+When the rejection *is* sound, it says so. The headline metric is the
+**false-hope rate**: how often it calls a valid rejection worth fighting.
+
+[![ci](https://github.com/OWNER/overturn/actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
 
 ---
 
+## Why this problem
+
+- Indian insurers rejected roughly **₹30,000 crore** of health claims in FY25,
+  about 15% more than the year before, according to coverage of the IRDAI
+  Annual Report 2024-25.
+- Complaints on IRDAI's Bima Bharosa portal rose from 47,658 (FY24) to 64,365
+  (FY25), and passed 73,000 by February FY26.
+- IRDAI collects claim repudiation rates but **not the reasons**. The one hard
+  requirement is on the letter itself: a rejection must give "full details
+  giving reference to the specific terms and conditions of the policy
+  document" (Master Circular on Health Insurance Business, 29.05.2024, §17(b)).
+- That requirement is exactly what cited retrieval can check. A rejection
+  names a clause; the policy and the regulations say what that clause is
+  allowed to do.
+
 ## The demo worth watching
 
-Ask *"can my landlord keep my deposit for normal wear and tear?"* and you get
-the clause, quoted, with a page number.
+The seeded case is a rejection for non-disclosure of hypertension, citing the
+policy's pre-existing-disease clause.
 
-Then ask *"am I allowed to keep a python?"* of a lease whose pet clause covers
-cats and dogs:
-
-> This lease does not address reptiles. Clause 8 permits up to two cats or dogs
-> under 25 pounds with written consent [1]; it says nothing about other animals,
-> so the lease neither permits nor prohibits a python.
-
-That abstention is the hard part of RAG, and it's the metric the eval harness
-exists to measure.
+1. **Review this rejection.** The agent reads the letter, finds the clause, and
+   finds the moratorium. Then it stops and asks one question: *when did your
+   cover first start?* Neither document says, and the answer decides the case.
+2. **Answer: 1 March 2019.** The rule check counts **79 months** of continuous
+   cover at admission. Past sixty, a claim can't be contested for
+   non-disclosure, only for established fraud, which the letter doesn't allege.
+   Verdict: **likely challengeable**, citing the policy's own moratorium clause
+   `[P4]` and the regulation behind it `[R1]`.
+3. **Download the appeal letter.** It's addressed to the insurer's grievance
+   officer, quotes each clause it relies on, and comes with a second page of
+   dates: when you can go to the Insurance Ombudsman (one month without a
+   reply) and the deadline (one year).
 
 ---
 
 ## Architecture
 
-One Next.js app. The chat UI and the API are the same deployment, the same
-origin, and the same `git push`.
-
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  Next.js App (Vercel)  —  one origin, one deployment             │
-│                                                                  │
-│  Frontend (App Router)          Backend (Route Handlers)         │
-│  ┌───────────────────┐          ┌─────────────────────────────┐  │
-│  │ Upload dropzone   │ ───────► │ /api/documents              │  │
-│  │                   │          │   parse → chunk → embed     │  │
-│  │ Chat + citations  │ ───────► │ /api/chats/[id]/messages    │  │
-│  │                   │ ◄─SSE─── │   rewrite→retrieve→rerank   │  │
-│  │ Sidebar (history) │          │   →grade→answer             │  │
-│  │ Pipeline stats    │ ───────► │ /api/admin                  │  │
-│  └───────────────────┘          │ /api/auth/*                 │  │
-│         │                       └──────────────┬──────────────┘  │
-│         └── session cookie ────────────────────┘                 │
-│             httpOnly · Secure · SameSite=Lax · Path=/            │
-└──────────────────────────────────────┬───────────────────────────┘
-                                        │
-              ┌─────────────────────────┴────────────────────────┐
-              ▼                                                   ▼
-┌───────────────────────────────┐                ┌───────────────────────────────┐
-│ Neon Postgres + pgvector       │                │ Google AI Studio (Gemini)      │
-│  users · documents · chunks    │                │  chat: 3.7-flash /             │
-│  (vector, tsvector)            │                │        3.1-flash-lite          │
-│  chats · messages              │                │  embeddings:                   │
-│  usage · traces                │                │    gemini-embedding-001        │
-└───────────────────────────────┘                └───────────────────────────────┘
+ Case = one rejected claim
+ ┌───────────────────────────────┐
+ │ policy wording   ──┐          │       ┌──────────────────────────────┐
+ │ rejection letter ──┼─ ingest ─┼──────►│ chunks (tenant-scoped)        │
+ │ discharge summary ─┘ (scans   │       │ pgvector + tsvector           │
+ │                      read by  │       └──────────────────────────────┘
+ │                      Gemini /  │       ┌──────────────────────────────┐
+ │                      Gemma)    │       │ reg_chunks (public)           │
+ └───────────────────────────────┘       │ IRDAI circular + regulations, │
+                                          │ Ombudsman Rules: 287 clauses  │
+ Agent (bounded tool loop)                └──────────────────────────────┘
+   search_policy      ── hybrid RRF + rerank over the case's documents  → P1, P2…
+   search_regulations ── the same over IRDAI's text                     → R1, R2…
+   check_rules        ── plain functions: moratorium, waiting periods,
+                         renewal grace, the letter's duty to cite a clause…
+   ask_questionnaire  ── a form, for facts no document holds (exits the loop)
+   record_verdict     ── challengeable / valid / needs_info + cited grounds
+        │
+        ├─► SSE to the case page: each tool step live, then the verdict
+        ├─► appeal letter PDF, assembled from the verdict (no model call)
+        └─► MCP server (list_cases, review_case) and the eval: same generator
 ```
 
-One provider for every model call — free tier, no card on file. `GOOGLE_API_KEY`
-is the only model credential in the app.
+One Next.js app on Vercel, Neon Postgres with pgvector, Google AI Studio for
+every model call.
 
-### The pipeline
+### Why the rules aren't the model's job
 
-| Stage | Model | What it does |
-| --- | --- | --- |
-| Rewrite | Gemini 3.1 Flash-Lite | *"what about two of them?"* → a standalone query. Skipped on the first message. |
-| Retrieve | — | pgvector cosine **and** `tsvector` keyword, two SQL statements, fused by **RRF** (k=60) |
-| Gate | — | nearest clause below cosine **0.55**? Not a lease question: decline now, skip the next three calls |
-| Rerank | Gemini 3.1 Flash-Lite | scores the 25 fused candidates against the question, keeps 5 |
-| Grade | Gemini 3.1 Flash-Lite | *do these clauses actually answer it?* If not, widen and retry — **once** |
-| Answer | Gemini 3.7 Flash | streamed over SSE, every claim cited |
+The model never does date arithmetic. Whether 2019-03-01 to 2025-10-02 is past
+sixty months, whether a renewal paid 24 days late broke continuity: those are
+[plain functions](lib/rules.ts) with [tests](tests/rules.test.ts). Each one
+names the provision it encodes, and each was read in the **primary text**, not
+in a blog. That reading corrected two widely repeated claims:
 
-Dense retrieval finds the paraphrase (*"snake"* → *"animals of any kind"*).
-Keyword retrieval finds the defined term that only means something inside this
-lease. Legal prose needs both, and RRF fuses them without pretending cosine
-distance and `ts_rank_cd` are on the same scale.
+- The 36-month cap on pre-existing-disease waiting periods is in the **IRDAI
+  (Insurance Products) Regulations, 2024**, Schedule III §7, not in the Master
+  Circular that most summaries attribute it to.
+- The Ombudsman Rules don't give the insurer fifteen days. A complaint can be
+  made once the insurer has rejected your written representation, or hasn't
+  replied **within one month**, and within one year after that (rule 14(3)).
 
-**The off-topic gate is calibrated, not guessed.** `npm run calibrate` scores
-every golden question against the nearest clause. Lease questions land at
-0.596–0.756, *including* the ones the lease doesn't cover (*"can I keep a
-python?"* is lowest), while off-topic ones (*"capital of France"*, *"recipe for
-biryani"*) top out at 0.503. The threshold sits mid-gap. Questions the lease is
-silent on stay above it on purpose: declining those well needs the pet clause in
-hand, which only the full pipeline has. The number is per-corpus; re-run it
-after changing the embedding model.
+Results are three-valued. A check that lacks a fact returns `null` and names
+the fact, and the agent asks the user for it instead of assuming.
 
-### At a glance
+### Two corpora, one boundary
 
-On upload, one structured call pulls rent, due date, late fee, deposit, deposit
-return window, term, notice, pets and utilities, each pinned to the clause it
-came from. Valid JSON is not the same as true JSON, so
-[`groundTerms()`](lib/ingest/terms.ts) keeps a term only if **every number in
-it appears in the clause it cites** and most of its words do too. A right-looking
-`$1,850` cited to the deposit clause is dropped: a key-terms card that cites the
-wrong page is worse than one with a gap. Extraction runs in parallel with
-embedding and can't fail an upload.
+The user's documents are tenant data, filtered by `user_id` in every statement.
+IRDAI's text is public: it sits in its own table with no tenant, is written
+only by `npm run ingest-regulations`, and is read through `raw()` with a comment
+saying why. Policy passages are labelled `P1…` and regulations `R1…`, so an
+appeal reads "your policy says" and "the regulator says" differently. A cite to
+an id the model was never handed is dropped before anyone sees it.
 
-### Scanned leases
+### The agent, and what it doesn't trust
 
-A PDF with no text layer used to be rejected. Now it goes to Gemini as inline
-PDF data and comes back as a verbatim per-page transcript, so page numbers, and
-therefore citations, stay real. The transcript is parsed defensively
-(out-of-range pages dropped, split pages merged), and a cut-off response says
-"split it" rather than pretending the scan was blank. Scans cap at 15 pages: one
-model call has to hold the whole transcript.
+Ported from a product-advisor agent's loop: tools that never throw (a bad
+argument becomes an error the model can recover from), a hard step cap, and a
+questionnaire tool that hands control back to the user. One deliberate change:
+**history is server-held**. The browser sends a question and nothing else, so a
+tool result can never be forged from the client. The model is told that
+document text is data, and the eval includes a rejection letter carrying a
+prompt injection.
 
-### Use it from Claude (MCP)
+### The appeal letter has no model call
 
-`npm run mcp -- you@example.com` starts a stdio MCP server with two tools:
-`list_documents` (with key terms) and `ask_lease`, which returns the same cited
-answer the web app gives. It drains the same `answerQuestion()` generator as the
-SSE route and the eval harness. Daily caps apply. In Claude Desktop's config:
+By the time there's a verdict, everything the letter needs is verified: the
+grounds came from `record_verdict`, each one quotes exactly the passages it
+cited, the claim details are the letter's grounded facts, and the dates come
+from the rules engine. Drafting with a model would be the one step that could
+invent something; [the template](lib/letter.ts) can't. Personal details it
+doesn't have stay as visible `[placeholders]`.
 
-```json
-{
-  "mcpServers": {
-    "leaselens": {
-      "command": "npm",
-      "args": ["run", "--silent", "--prefix", "/path/to/leaselens", "mcp", "--", "you@example.com"]
-    }
-  }
-}
-```
+---
 
-It runs as the named account, the same trust model as `npm run eval`: whoever
-can start it already holds `DATABASE_URL`. A remote server with per-user tokens
-is the upgrade if anyone else ever needs it.
+## Evaluation
+
+`npm run eval` reviews 16 synthetic rejection letters against one synthetic
+policy ([eval/cases.jsonl](eval/cases.jsonl)): 8 that should be challengeable,
+7 that should be valid (one carrying a prompt injection), and 1 that should
+make the agent ask. It writes `eval/results.md`.
+
+EVAL_TABLE
+
+- **False-hope rate**: valid rejections called challengeable. The number this
+  project exists to keep low.
+- **Missed-rights rate**: challengeable rejections called valid.
+- **Citation validity**: every `[P]`/`[R]` opens onto a passage the agent was
+  actually given.
+- **Cites the regulator**: challengeable verdicts backed by an IRDAI passage,
+  not only the policy's own wording.
+
+The cases are checked offline in CI ([tests/golden.test.ts](tests/golden.test.ts)):
+renderable, balanced enough to measure, and wherever a rule decides a case,
+labelled the way the rules engine decides it. A mislabelled case would
+otherwise score the agent wrong forever. A run where any call never reached the
+model is voided rather than scored: on the free tier, an outage scored as a
+wrong answer is a fake number.
+
+### Reading scans: Gemma 4 vs Gemini
+
+Rejection letters usually arrive as scans. `npm run scan-bench` renders each
+fixture as a seeded scan (rasterised, tilted, speckled, saved as JPEG inside
+an image-only PDF) and has each model read it through the production path.
+
+SCAN_TABLE
+
+A spike settled the plumbing first: Gemma 4 on the Gemini API reads an
+image-only PDF directly and accepts a system instruction and JSON mode, so the
+scan path just takes a model name.
 
 ---
 
@@ -138,28 +171,18 @@ is the upgrade if anyone else ever needs it.
 The governing rule: **the authenticated identity determines the tenant; request
 ids only select resources within that tenant.** Never the other way round.
 
-Enforced by three overlapping mechanisms, because one is a single point of
-failure:
-
 1. **`session()`** ([lib/auth/session.ts](lib/auth/session.ts)) is the only place
-   a user identity enters the system. No handler reads a user id from a body, a
-   query string, or a header.
+   a user identity enters the system.
 2. **`tq()`** ([lib/db/client.ts](lib/db/client.ts)) refuses at runtime to run any
-   statement touching a tenant table without a `user_id` predicate — it throws
-   `TenancyViolation` rather than returning rows.
-3. **`tests/tenant-guard.test.ts`** applies the identical rule to
-   `lib/db/queries.ts` **as source text**, so a missing filter fails CI in
-   milliseconds without a database. It carries its own negative control, so it
-   can't pass by matching nothing.
+   statement touching a tenant table without a `user_id` predicate.
+3. **`tests/tenant-guard.test.ts`** applies the same rule to
+   `lib/db/queries.ts` **as source text**, with its own negative control.
 
-Plus [`tests/isolation.test.ts`](tests/isolation.test.ts): twelve distinct
-cross-tenant attacks, each a different route, all expecting **404 — not 403**. A
-403 would confirm the resource exists and belongs to someone.
-
-`middleware.ts` is redirects only. Delete it and the app is still secure; it
-would just show signed-out users an empty screen instead of the login page.
-Middleware that guards data puts the whole boundary one matcher typo away from a
-leak.
+[`tests/isolation.test.ts`](tests/isolation.test.ts) is a list of distinct
+cross-tenant attacks, all expecting **404, not 403**. A 403 would confirm the
+resource exists. Two came with multi-document cases: filing a document into
+someone else's case (the case id arrives in the upload form), and smuggling
+someone else's document id into a search alongside your own.
 
 ---
 
@@ -168,143 +191,72 @@ leak.
 ```bash
 cp .env.example .env.local     # DATABASE_URL, SESSION_SECRET, GOOGLE_API_KEY
 npm install
-npm run migrate                # idempotent; safe to re-run
-npm run seed                   # generates two synthetic leases and ingests them
+npm run migrate                # idempotent
+npm run ingest-regulations     # downloads IRDAI's PDFs into corpus/, ~3 min on the free tier
+npm run seed                   # the demo case: a synthetic policy and rejection letter
 npm run dev
 ```
 
-`npm test` needs none of that — Postgres runs in-process via PGlite, and the
-model calls are faked. No Docker, no service container in CI.
-
 | Command | |
 | --- | --- |
-| `npm run dev` | the app |
-| `npm test` | 105 tests, ~10s, no external services |
-| `npm run typecheck` | `tsc --noEmit` |
-| `npm run migrate` | apply `lib/db/schema.sql` |
-| `npm run seed` | create the demo account and ingest the fixtures (backfills key terms on old seeds) |
-| `npm run eval` | the golden set → `eval/results.md` (free tier; ten-plus minutes) |
-| `npm run calibrate` | top-1 cosine for lease vs off-topic questions → the off-topic threshold |
-| `npm run mcp -- <email>` | stdio MCP server for that account |
+| `npm test` | 150+ tests, no external services (Postgres runs in-process via PGlite) |
+| `npm run eval` | the 16 cases → `eval/results.md` (free tier; several minutes) |
+| `npm run scan-bench` | Gemma 4 vs Gemini on seeded scans → `eval/scan-results.md` |
+| `npm run ingest-regulations` | re-run after IRDAI revises a document; it replaces, never duplicates |
+| `npm run mcp -- <email>` | stdio MCP server with `list_cases` and `review_case` |
 
----
+### Use it from Claude (MCP)
+
+```json
+{
+  "mcpServers": {
+    "overturn": {
+      "command": "npm",
+      "args": ["run", "--silent", "--prefix", "/path/to/overturn", "mcp", "--", "you@example.com"]
+    }
+  }
+}
+```
+
+It runs as the named account, the same trust model as the eval: whoever can
+start it already holds `DATABASE_URL`. Daily caps apply.
 
 ## Deploying
 
-1. **Neon** → new project, copy the **pooled** connection string (the host
-   contains `-pooler`). `pgvector` ships preinstalled.
-2. **Google AI Studio** → [aistudio.google.com](https://aistudio.google.com) →
-   Get API key. No card on file; the free tier (1,500 requests/day on Flash)
-   covers a demo comfortably.
-3. **Vercel** → import the repo. Root directory is the repo root; there is no
-   `frontend/` to point at. Set `DATABASE_URL`, `SESSION_SECRET`,
+1. **Neon**: a database (a separate one from any other app; the schemas
+   differ). Use the pooled connection string.
+2. **Google AI Studio**: an API key. The free tier is enough for a demo, with
+   its limits: 5 requests a minute on the answer model, 100 embedded texts a
+   minute (`embed()` paces itself under that).
+3. **Vercel**: import the repo and set `DATABASE_URL`, `SESSION_SECRET`,
    `GOOGLE_API_KEY`.
-4. **GitHub** → secrets `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`
-   (the last two are in `.vercel/project.json` after `npx vercel link`), plus
-   `DATABASE_URL` / `GOOGLE_API_KEY` for the nightly eval.
-5. `npm run migrate && npm run seed` once against production, **and run
-   `npm run migrate` again before pushing any change to `schema.sql`.** CI
-   deploys code, not schema: code that selects a column the database doesn't
-   have yet fails every request that touches it.
-
-`vercel.json` sets `"deploymentEnabled": { "main": false }`. **Leave it that
-way.** Vercel's Git integration otherwise deploys on push before CI has run,
-which makes the test job decorative — the opposite of the point.
-
-**Prove the gate once, on purpose:** delete `AND user_id = $1` from `getChat` in
-`lib/db/queries.ts`, open a PR, and watch `tenant-guard.test.ts` fail before the
-isolation suite even connects to a database. Then revert.
+4. **GitHub** secrets for CI's deploy step and the nightly eval.
+5. `npm run migrate && npm run ingest-regulations && npm run seed` once against
+   production, and `npm run migrate` again **before** pushing any change to
+   `schema.sql`: CI deploys code, not schema.
 
 ---
 
-## Design decisions
+## Decisions and trade-offs
 
-**One deployment, not two.** An earlier version of this project split a Next.js
-frontend from a Dockerized FastAPI backend. That seam cost a CORS allowlist, a
-`SameSite=None; Secure` refresh cookie, a rewrite proxy to make the cookie
-first-party, a `refresh_tokens` table with rotation and revocation, and a test
-that read the frontend config from the backend suite to keep the two halves
-agreeing about a cookie path. Collapsing to one origin deleted all of it. Eight
-environment variables became three — `DATABASE_URL`, `SESSION_SECRET`,
-`GOOGLE_API_KEY`. What's left is the retrieval pipeline and the tenancy
-boundary, which is what the project was ever about.
+- **The agent runs on the lite model.** One review spends four to six calls,
+  and the free tier allows the answer model five a minute. The legal reasoning
+  is carried by the rules engine and the retrieved text; the eval measures
+  whether that holds.
+- **Tool steps stream; the verdict arrives whole.** Watching "checking IRDAI's
+  rules" is the useful part; a verdict half-streamed before its last tool call
+  would be a guess.
+- **One document of each kind per case**, enforced by a database constraint
+  rather than a route, so two uploads in flight can't race past it.
+- **Regulations are public and shared**; only a script writes them.
+- **Not legal advice.** It reads your documents and IRDAI's rules. It does not
+  know case law, your insurer's practice, or facts you haven't given it.
 
-**No ORM.** The interesting statements are vector and tsvector SQL that an ORM
-only obscures, and every one needs a tenant filter you want visible in the
-source. Keeping all SQL in one file is also what makes the CI scan possible.
-
-**scrypt, not argon2id.** argon2id is the better primitive on paper. scrypt is
-memory-hard, in `node:crypto`, and cannot break a serverless build the way a
-native module can. Parameters are stored with each hash so they can be raised
-without invalidating anyone's password.
-
-**One provider, free tier.** Every model call — rewrite, rerank, grade, answer,
-embeddings — goes through Google AI Studio. One key, no card on file, and the
-1,500-requests/day free tier on the Flash models comfortably covers a demo.
-`EMBED_DIM` (768) is pinned in two places — here and the `vector(768)` column —
-so a silent model or dimension change fails at INSERT rather than at retrieval.
-The trade-off is the free tier's rate limit (5 requests/minute on the answer
-model as of October 2026), which is why the eval script runs slowly rather than
-in a burst, and why a 429 gets one retry after the delay the API asks for, and
-only when that delay fits inside the request.
-
-**The PDF isn't stored.** Only extracted text and page numbers. Vercel's
-filesystem is ephemeral and blob storage is a whole extra service; the citation
-popover shows the exact clause text, which is most of what a PDF viewer would
-give you.
-
-**`after()` for ingestion.** The upload response returns an id immediately and
-parsing continues past it, so the client polls instead of holding a request open
-for thirty seconds. It defers the work, not the function's time cap (300s for
-uploads, the Hobby ceiling). Raising `MAX_PAGES` past 60 needs a queue, not a
-bigger number.
-
-**Uploads cap at 4 MB on Vercel, 8 MB locally.** Vercel rejects a body over
-4.5 MB before any handler runs, with an opaque `FUNCTION_PAYLOAD_TOO_LARGE`.
-Capping under it means the user reads LeaseLens' own message instead.
+**Built on [LeaseLens](https://github.com/OWNER/leaselens)**: the auth, tenant
+isolation, ingestion and hybrid retrieval came from there. Overturn replaced
+its fixed answer pipeline with the agent; that pipeline's rewrite, grade and
+off-topic gate became decisions the agent makes itself.
 
 ---
 
-## What this trades away
-
-- **Independent scaling and independent deploys.** A CSS change now redeploys
-  the API. At this size that's a feature; it's still a real difference.
-- **A wall on every request.** 60 seconds for a question, 300 for an upload.
-  Ingestion caps at 60 pages (15 for a scan). The split version could run a
-  ten-minute job.
-- **Python's document ecosystem.** `pypdf` + `pdfplumber` handle table-heavy
-  PDFs better than pdf.js. Leases are mostly linear prose, so this rarely bites
-  — but a lease with a rent-schedule table will chunk worse here.
-
----
-
-## Evaluation
-
-`npm run eval` runs 27 questions across the two synthetic fixture leases and
-writes `eval/results.md`:
-
-- **Recall@5** — did the clause that decides the answer survive to the prompt?
-- **Refusal accuracy** — on the nine questions the leases genuinely don't cover
-  (six lease topics they're silent on, three off-topic), did it decline?
-- **False refusals** — the failure mode refusal accuracy would otherwise hide.
-- **Citation validity** — every `[n]` resolves to a clause actually supplied.
-- **Groundedness** — LLM-as-judge: is every claim supported by a cited clause?
-- **Key-terms accuracy** — against `eval/key-terms.json`: right value, on a
-  page that really says it, and *nothing* for the fields a lease is silent on.
-  Garden Flat says the owner names the deposit scheme "within thirty days";
-  that is not a deposit-return window, and extracting it as one is a miss.
-
-A 503 or exhausted quota mid-run is retried, not scored as a wrong answer:
-otherwise the free tier's bad minutes become the pipeline's bad numbers.
-
-The fixtures are generated, never committed: `scripts/fixtures.ts` writes one
-lease with numbered clauses and one in continuous plain prose, which is where
-clause-boundary chunking earns or loses its keep. Never ship a real person's
-lease in a public repo.
-
-> Numbers land in `eval/results.md` after the first run. It needs live API keys,
-> so it is not part of `npm test`.
-
----
-
-*Information from your document, not legal advice.*
+*Information from your documents and IRDAI's rules, not legal or medical advice.*

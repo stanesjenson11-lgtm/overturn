@@ -210,6 +210,46 @@ export function specificWaiting(f: {
 }
 
 /**
+ * The initial waiting period: an illness first diagnosed within the policy's
+ * opening days (30 in standard wordings) isn't covered, an accident always is.
+ * This one is a term of the policy, not a regulation, so it checks only the
+ * date arithmetic the model must never do itself; the wording decides the rest.
+ *
+ * `holds: true` means the initial wait can't bar this claim.
+ */
+export function initialWaiting(f: {
+  coverageStart?: string;
+  diagnosisDate?: string;
+  policyWaitDays?: number;
+  accident?: boolean;
+}): RuleResult {
+  const rule = "initial_waiting";
+  const source = "the policy's own initial waiting period clause";
+  if (f.accident)
+    return {
+      rule,
+      holds: true,
+      finding: "Caused by an accident, which an initial waiting period doesn't apply to.",
+      source,
+    };
+
+  const needs = missing({ coverageStart: f.coverageStart, diagnosisDate: f.diagnosisDate, accident: f.accident });
+  if (needs.length) return undecided(rule, source, needs);
+
+  const days = (Date.parse(f.diagnosisDate!) - Date.parse(f.coverageStart!)) / 86_400_000;
+  const wait = f.policyWaitDays ?? 30;
+  return {
+    rule,
+    holds: days >= wait,
+    finding:
+      days >= wait
+        ? `First diagnosed ${days} days after cover began, past the ${wait}-day initial wait.`
+        : `First diagnosed ${days} days after cover began, inside the ${wait}-day initial wait.`,
+    source,
+  };
+}
+
+/**
  * A renewal paid within the grace period is not a break in the policy:
  * fifteen days when premiums are monthly, thirty otherwise. Schedule III §1.3,
  * §9.3. A break restarts the clock for every waiting period and the moratorium.
@@ -320,6 +360,7 @@ export const RULES = {
   moratorium,
   ped_waiting: pedWaiting,
   specific_waiting: specificWaiting,
+  initial_waiting: initialWaiting,
   continuity,
   cites_policy_terms: citesPolicyTerms,
   documents_duty: documentsDuty,

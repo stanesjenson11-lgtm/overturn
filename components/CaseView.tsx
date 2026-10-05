@@ -210,7 +210,7 @@ export default function CaseView({ caseId }: { caseId: string }) {
     await load();
   }
 
-  async function ask(text: string) {
+  async function ask(text: string, review = false) {
     if (!text.trim() || streaming || !ready) return;
     setQuestion("");
     setError(null);
@@ -225,7 +225,7 @@ export default function CaseView({ caseId }: { caseId: string }) {
       const res = await fetch(`/api/cases/${caseId}/messages`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ question: text }),
+        body: JSON.stringify({ question: text, review }),
       });
 
       // A rejected request (429, 404, validation) answers with JSON, not SSE.
@@ -323,7 +323,7 @@ export default function CaseView({ caseId }: { caseId: string }) {
                 {reviewable && (
                   <button
                     type="button"
-                    onClick={() => void ask(REVIEW)}
+                    onClick={() => void ask(REVIEW, true)}
                     className="mt-6 rounded-xl bg-accent px-5 py-3 text-sm font-medium text-accent-ink shadow-neu-sm transition active:shadow-neu-inset-sm"
                   >
                     Review this rejection
@@ -380,7 +380,7 @@ export default function CaseView({ caseId }: { caseId: string }) {
                   )}
                   {/* Only the latest message's questions are still open. */}
                   {m.meta?.questionnaire && m === messages.at(-1) && !streaming && (
-                    <QuestionnaireForm questionnaire={m.meta.questionnaire} onSubmit={(t) => void ask(t)} />
+                    <QuestionnaireForm questionnaire={m.meta.questionnaire} onSubmit={(t) => void ask(t, true)} />
                   )}
                 </div>
               </li>

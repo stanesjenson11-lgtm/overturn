@@ -5,6 +5,7 @@ import {
   continuity,
   documentsDuty,
   fullMonths,
+  initialWaiting,
   moratorium,
   ombudsmanWindow,
   pedWaiting,
@@ -119,6 +120,19 @@ describe("a specific waiting period", () => {
 
   it("needs to know whether it was an accident before it can say anything", () => {
     expect(specificWaiting({ coverageStart: "2024-01-01", admissionDate: "2025-06-01", policyWaitMonths: 24 }).needs).toEqual(["accident"]);
+  });
+});
+
+describe("the initial waiting period", () => {
+  it("bars an illness diagnosed in the policy's first 30 days", () => {
+    const r = initialWaiting({ coverageStart: "2025-06-01", diagnosisDate: "2025-06-14", accident: false });
+    expect(r.holds).toBe(false);
+    expect(r.finding).toMatch(/13 days/);
+  });
+
+  it("is over on day 30, and never applies to an accident", () => {
+    expect(initialWaiting({ coverageStart: "2025-06-01", diagnosisDate: "2025-07-01", accident: false }).holds).toBe(true);
+    expect(initialWaiting({ coverageStart: "2025-06-01", diagnosisDate: "2025-06-02", accident: true }).holds).toBe(true);
   });
 });
 

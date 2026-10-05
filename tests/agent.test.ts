@@ -177,6 +177,29 @@ describe("the agent loop", () => {
     expect(done.citations.map((c: any) => c.id)).toEqual(["P1"]);
   });
 
+  it("makes a review end in a tool call, and a question free to answer in prose", async () => {
+    let requests = scripted([[{ text: "Done." }]]);
+    await run();
+    expect(requests[0].config.toolConfig).toBeUndefined();
+
+    requests = scripted([[{ text: "Done." }]]);
+    const events: any[] = [];
+    for await (const e of reviewCase({ userId: USER, documentIds, question: "Review this.", history: [], review: true }))
+      events.push(e);
+    expect(requests[0].config.toolConfig.functionCallingConfig.mode).toBe("ANY");
+  });
+
+  it("reads '[P1, R1]' as two citations, however the model bracketed them", async () => {
+    scripted([
+      [call("search_policy", { query: "pre-existing" })],
+      [call("search_regulations", { query: "moratorium" })],
+      [{ text: "Covered after 36 months [P1, R1]." }],
+    ]);
+    const done = (await run()).at(-1);
+    expect(done.content).toContain("[P1][R1]");
+    expect(done.citations.map((c: any) => c.id)).toEqual(["P1", "R1"]);
+  });
+
   it("refuses a malformed verdict rather than recording half of one", async () => {
     const requests = scripted([[call("record_verdict", { verdict: "probably fine" })], [{ text: "Done." }]]);
     const done = (await run()).at(-1);

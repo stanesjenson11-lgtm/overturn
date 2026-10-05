@@ -107,6 +107,7 @@ server.registerTool(
       documentIds: ready.map((d) => d.id),
       question: question ?? "Review this rejection: does the reason the insurer gave hold up?",
       history: [],
+      review: true,
       facts: { letter: termsOf("rejection"), policy: termsOf("policy") },
     })) {
       if (event.type === "error") return text(event.message, true);

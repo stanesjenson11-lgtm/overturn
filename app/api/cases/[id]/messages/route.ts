@@ -17,7 +17,9 @@ import { titleFor } from "@/lib/rag/rewrite";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const Body = z.object({ question: z.string().trim().min(3).max(2000) });
+// review: the user asked for (or is answering questions toward) a verdict, so
+// the agent must end in one. Anything else is a question it may answer in text.
+const Body = z.object({ question: z.string().trim().min(3).max(2000), review: z.boolean().optional() });
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -35,7 +37,7 @@ export const POST = route(async (req: Request, ctx: Ctx) => {
 
   const parsed = Body.safeParse(await req.json());
   if (!parsed.success) throw badRequest("Ask a question of at least a few words.");
-  const question = parsed.data.question;
+  const { question, review } = parsed.data;
 
   await assertWithinDailyLimit(userId);
 
@@ -62,7 +64,7 @@ export const POST = route(async (req: Request, ctx: Ctx) => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
 
       try {
-        for await (const event of reviewCase({ userId, documentIds, question, history, facts })) {
+        for await (const event of reviewCase({ userId, documentIds, question, history, facts, review })) {
           send(event);
 
           if (event.type === "done") {
