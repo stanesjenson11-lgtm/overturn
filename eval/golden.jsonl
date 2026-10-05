@@ -1,0 +1,27 @@
+{"id":"deposit-return-window","document":"maple-court","answerable":true,"evidence":"thirty (30) days","question":"How long does my landlord have to return my security deposit after I move out?"}
+{"id":"wear-and-tear","document":"maple-court","answerable":true,"evidence":"normal wear and tear","question":"Can my landlord keep my deposit for normal wear and tear?"}
+{"id":"late-fee","document":"maple-court","answerable":true,"evidence":"late fee of $75","question":"What happens if I pay rent a week late?"}
+{"id":"rent-amount","document":"maple-court","answerable":true,"evidence":"$1,850","question":"How much is rent and when is it due?"}
+{"id":"utilities-split","document":"maple-court","answerable":true,"evidence":"water, sewer, and trash","question":"Which utilities do I have to pay for myself?"}
+{"id":"pet-limits","document":"maple-court","answerable":true,"evidence":"twenty-five (25) pounds","question":"How many pets can I have and how big can they be?"}
+{"id":"service-animal","document":"maple-court","answerable":true,"evidence":"Service animals","question":"Do I have to pay the pet deposit for a service animal?"}
+{"id":"entry-notice","document":"maple-court","answerable":true,"evidence":"9:00 AM and 6:00 PM","question":"Can my landlord come into the apartment while I am at work?"}
+{"id":"move-out-notice","document":"maple-court","answerable":true,"evidence":"month to month tenancy by giving","question":"How much notice do I have to give before I move out?"}
+{"id":"break-lease","document":"maple-court","answerable":true,"evidence":"termination fee equal to two","question":"What does it cost me to break the lease early?"}
+{"id":"painting","document":"maple-court","answerable":true,"evidence":"shall not paint, wallpaper","question":"Am I allowed to paint the living room?"}
+{"id":"long-guest","document":"maple-court","answerable":true,"evidence":"fourteen (14) consecutive nights","question":"My partner wants to stay for a month. Is that allowed?"}
+{"id":"repair-timeline","document":"maple-court","answerable":true,"evidence":"all other reports within seven","question":"How quickly does the landlord have to fix a broken dishwasher?"}
+{"id":"subletting","document":"maple-court","answerable":true,"evidence":"shall not sublet the Premises","question":"Can I sublet my apartment for the summer?"}
+{"id":"python","document":"maple-court","answerable":false,"evidence":null,"question":"Am I allowed to keep a python?"}
+{"id":"smoking","document":"maple-court","answerable":false,"evidence":null,"question":"Does the lease say anything about smoking inside the apartment?"}
+{"id":"parking","document":"maple-court","answerable":false,"evidence":null,"question":"Do I get a parking space with the apartment?"}
+{"id":"renters-insurance","document":"maple-court","answerable":false,"evidence":null,"question":"Am I required to carry renters insurance?"}
+{"id":"flat-notice","document":"garden-flat","answerable":true,"evidence":"one full calendar month of notice","question":"How much notice do I need to give to end the tenancy?"}
+{"id":"flat-deposit","document":"garden-flat","answerable":true,"evidence":"one thousand four hundred pounds","question":"How much is the deposit and where is it held?"}
+{"id":"flat-hedge","document":"garden-flat","answerable":true,"evidence":"cut back the hedge","question":"Who is responsible for the hedge at the back of the garden?"}
+{"id":"flat-airbnb","document":"garden-flat","answerable":true,"evidence":"short term letting platform","question":"Can I put the flat on Airbnb while I am away?"}
+{"id":"flat-pets","document":"garden-flat","answerable":false,"evidence":null,"question":"Can I keep a cat in the flat?"}
+{"id":"flat-parking","document":"garden-flat","answerable":false,"evidence":null,"question":"Is there a parking permit included with the flat?"}
+{"id":"off-topic-capital","document":"maple-court","answerable":false,"evidence":null,"question":"What is the capital of France?"}
+{"id":"off-topic-recipe","document":"maple-court","answerable":false,"evidence":null,"question":"Give me a recipe for chicken biryani."}
+{"id":"off-topic-code","document":"garden-flat","answerable":false,"evidence":null,"question":"Write a Python function that reverses a string."}

@@ -1,0 +1,22 @@
+{
+  "maple-court": {
+    "rent": "1,850",
+    "rent_due": "first day",
+    "late_fee": "75",
+    "deposit": "2,400",
+    "deposit_return": "30",
+    "term": "12",
+    "notice_to_end": "60",
+    "pets": "cats or dogs",
+    "utilities": "electricity"
+  },
+  "garden-flat": {
+    "rent": "nine hundred and fifty",
+    "rent_due": "first working day",
+    "deposit": "one thousand four hundred",
+    "term": "six months",
+    "notice_to_end": "one full calendar month",
+    "deposit_return": null,
+    "pets": null
+  }
+}

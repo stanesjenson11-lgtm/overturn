@@ -1,0 +1,37 @@
+name: eval
+
+# Nightly, not per-push: the free tier's 15 req/min limit makes a full run take
+# a few minutes, and the numbers only move when the prompts, the chunker, or
+# the retrieval change.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run the golden set
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: |
+          npm run seed
+          npm run eval
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: eval/results.md

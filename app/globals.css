@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #f0f1f4;
+  --color-panel: #f0f1f4;
+  --color-line: #dcdfe5;
+  --color-ink: #1b1c1f;
+  --color-muted: #6d7178;
+  --color-accent: #f97316;
+  --color-accent-ink: #fff8f2;
+  --color-accent-soft: #ffe7ce;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+
+  /* Neumorphism: a raised/pressed element is "carved" from the page's own
+     color, so light and dark faux-shadows do all the work — no borders,
+     no gradients. --neu-dark/--neu-light (below) get swapped per theme. */
+  --shadow-neu: 8px 8px 18px var(--neu-dark), -8px -8px 18px var(--neu-light);
+  --shadow-neu-sm: 5px 5px 11px var(--neu-dark), -5px -5px 11px var(--neu-light);
+  --shadow-neu-inset: inset 4px 4px 9px var(--neu-dark), inset -4px -4px 9px var(--neu-light);
+  --shadow-neu-inset-sm: inset 3px 3px 6px var(--neu-dark), inset -3px -3px 6px var(--neu-light);
+}
+
+:root {
+  --neu-dark: rgba(163, 170, 181, 0.65);
+  --neu-light: rgba(255, 255, 255, 0.95);
+}
+
+@media (prefers-color-scheme: dark) {
+  @theme {
+    --color-paper: #19191c;
+    --color-panel: #19191c;
+    --color-line: #2b2c30;
+    --color-ink: #f1f1f3;
+    --color-muted: #8b8d94;
+    --color-accent: #fb923c;
+    --color-accent-ink: #1a0f04;
+    --color-accent-soft: #3a2411;
+  }
+
+  :root {
+    --neu-dark: rgba(0, 0, 0, 0.7);
+    --neu-light: rgba(255, 255, 255, 0.045);
+  }
+}
+
+html,
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The answer body is prose about a document, so it reads as a document. */
+.prose-lease {
+  font-family: var(--font-serif);
+  font-size: 1.02rem;
+  line-height: 1.7;
+}
+
+.prose-lease p + p {
+  margin-top: 0.85em;
+}

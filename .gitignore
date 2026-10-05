@@ -1,0 +1,25 @@
+# Secrets — .env.example is committed, nothing else is
+.env
+.env.local
+.env*.local
+
+# Node / Next
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# Vercel CLI link state — holds the org/project IDs, which belong in CI secrets
+.vercel/
+
+# Generated fixtures and eval output
+eval/fixtures/*.pdf
+eval/results.md
+
+# OS / editor / local tooling
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.impeccable/
