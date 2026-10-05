@@ -15,6 +15,8 @@ concurrency:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    env:
+      HAS_VERCEL: ${{ secrets.VERCEL_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -39,9 +41,10 @@ jobs:
       # Only on main, and only after everything above is green. Vercel's own Git
       # integration is disabled in vercel.json so that this is the only path to
       # production — otherwise Vercel deploys on push before CI has an opinion,
-      # and the tests above become decorative.
+      # and the tests above become decorative. Skipped, not failed, until the
+      # Vercel secrets exist, so a repo before its first deploy still shows green.
       - name: Deploy
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && env.HAS_VERCEL == 'true'
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}

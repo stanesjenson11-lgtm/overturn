@@ -12,7 +12,7 @@ doesn't stand, it hands you the appeal letter.
 When the rejection *is* sound, it says so. The headline metric is the
 **false-hope rate**: how often it calls a valid rejection worth fighting.
 
-[![ci](https://github.com/OWNER/overturn/actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
+[![ci](https://github.com/stanesjenson11-lgtm/overturn/actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
 
 ---
 
@@ -305,7 +305,7 @@ start it already holds `DATABASE_URL`. Daily caps apply.
 - **Not legal advice.** It reads your documents and IRDAI's rules. It does not
   know case law, your insurer's practice, or facts you haven't given it.
 
-**Built on [LeaseLens](https://github.com/OWNER/leaselens)**: the auth, tenant
+**Built on [LeaseLens](https://github.com/stanesjenson11-lgtm/leaselens)**: the auth, tenant
 isolation, ingestion and hybrid retrieval came from there. Overturn replaced
 its fixed answer pipeline with the agent; that pipeline's rewrite, grade and
 off-topic gate became decisions the agent makes itself.

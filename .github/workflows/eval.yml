@@ -14,16 +14,24 @@ permissions:
 jobs:
   eval:
     runs-on: ubuntu-latest
+    # Skipped, not failed, until the secrets exist, so the repo doesn't post a
+    # red run every night before it's been given a database.
+    env:
+      READY: ${{ secrets.DATABASE_URL != '' && secrets.GOOGLE_API_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
+        if: env.READY == 'true'
       - uses: actions/setup-node@v4
+        if: env.READY == 'true'
         with:
           node-version: 22
           cache: npm
 
       - run: npm ci
+        if: env.READY == 'true'
 
       - name: Review the eval cases
+        if: env.READY == 'true'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
@@ -35,6 +43,7 @@ jobs:
           npm run eval
 
       - uses: actions/upload-artifact@v4
+        if: env.READY == 'true'
         with:
           name: eval-results
           path: eval/results.md
