@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { chunkPages } from "@/lib/ingest/chunk";
 import { extractPages } from "@/lib/ingest/pdf";
-import { KEY_TERM_LABELS } from "@/lib/ingest/terms";
-import { GARDEN_FLAT, MAPLE_COURT, renderPdf } from "@/scripts/fixtures";
+import { termFields } from "@/lib/ingest/terms";
+import { GARDEN_FLAT, MAPLE_COURT, SHIELD_POLICY, SHIELD_REJECTION, renderPdf } from "@/scripts/fixtures";
 
 /**
  * The eval harness costs real money to run and needs live API keys, so its
@@ -104,14 +104,18 @@ describe("the key-terms expectations", () => {
   const expected: Record<string, Record<string, string | null>> = JSON.parse(
     readFileSync(path.join(root, "eval/key-terms.json"), "utf8"),
   );
-  const text = { "maple-court": MAPLE_COURT, "garden-flat": GARDEN_FLAT } as Record<string, string>;
+  const docs = {
+    "shield-policy": { kind: "policy", text: SHIELD_POLICY },
+    "shield-rejection": { kind: "rejection", text: SHIELD_REJECTION },
+  } as const;
 
-  it("name real fields and quote text the lease contains", () => {
-    for (const [doc, fields] of Object.entries(expected)) {
-      expect(text[doc], doc).toBeDefined();
+  it("name real fields and quote text the document contains", () => {
+    for (const [name, fields] of Object.entries(expected)) {
+      const doc = docs[name as keyof typeof docs];
+      expect(doc, name).toBeDefined();
       for (const [field, want] of Object.entries(fields)) {
-        expect(Object.keys(KEY_TERM_LABELS), field).toContain(field);
-        if (want !== null) expect(text[doc].toLowerCase(), `${doc}.${field}`).toContain(want.toLowerCase());
+        expect(termFields(doc.kind), field).toContain(field);
+        if (want !== null) expect(doc.text.toLowerCase(), `${name}.${field}`).toContain(want.toLowerCase());
       }
     }
   });

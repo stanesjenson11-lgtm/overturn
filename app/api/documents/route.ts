@@ -67,7 +67,7 @@ export const POST = route(async (req: Request) => {
   // Note this still runs inside maxDuration — it defers the work, not the cap.
   after(async () => {
     try {
-      await ingest(userId, doc.id, bytes);
+      await ingest(userId, doc.id, doc.kind, bytes);
     } catch (e) {
       // ingest() already wrote the reason to documents.error, which is what the
       // UI shows. Nothing is listening to this throw.

@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { api, type Case, type Citation, type Doc, type DocKind, type Msg } from "@/lib/client";
+import { api, type Case, type Citation, type Doc, type DocKind, type KeyTerm, type Msg } from "@/lib/client";
 import { AnswerText } from "./CitationChip";
 import { DeleteButton, REFRESH } from "./Sidebar";
 import UploadDropzone from "./UploadDropzone";
@@ -43,6 +43,25 @@ const SUGGESTIONS = [
   "Does my policy cover robotic surgery?",
 ];
 
+/** Facts pulled from one document, each with the page it came from. */
+function TermsCard({ title, terms }: { title: string; terms: KeyTerm[] }) {
+  if (!terms.length) return null;
+  return (
+    <section className="mt-6 rounded-2xl p-5 shadow-neu-sm">
+      <h2 className="text-xs font-medium uppercase tracking-wide text-muted">{title}</h2>
+      <dl className="mt-3 grid grid-cols-[auto_1fr_auto] gap-x-4 gap-y-2 text-sm">
+        {terms.map((t) => (
+          <Fragment key={t.field}>
+            <dt className="text-muted">{t.label}</dt>
+            <dd>{t.value}</dd>
+            <dd className="text-xs tabular-nums text-muted">p.{t.page}</dd>
+          </Fragment>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
 export default function CaseView({ caseId }: { caseId: string }) {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -83,6 +102,7 @@ export default function CaseView({ caseId }: { caseId: string }) {
 
   const ready = docs.some((d) => d.status === "ready");
   const terms = docs.find((d) => d.kind === "policy")?.key_terms ?? [];
+  const letter = docs.find((d) => d.kind === "rejection")?.key_terms ?? [];
 
   async function removeDoc(id: string) {
     await api(`/api/documents/${id}`, { method: "DELETE" });
@@ -202,22 +222,8 @@ export default function CaseView({ caseId }: { caseId: string }) {
         {messages.length === 0 && !streaming && (
           <div className="mt-10 max-w-lg">
             <h1 className="font-serif text-2xl">What do your documents say?</h1>
-            {terms.length > 0 && (
-              <section aria-labelledby="glance" className="mt-6 rounded-2xl p-5 shadow-neu-sm">
-                <h2 id="glance" className="text-xs font-medium uppercase tracking-wide text-muted">
-                  Your policy at a glance
-                </h2>
-                <dl className="mt-3 grid grid-cols-[auto_1fr_auto] gap-x-4 gap-y-2 text-sm">
-                  {terms.map((t) => (
-                    <Fragment key={t.field}>
-                      <dt className="text-muted">{t.label}</dt>
-                      <dd>{t.value}</dd>
-                      <dd className="text-xs tabular-nums text-muted">p.{t.page}</dd>
-                    </Fragment>
-                  ))}
-                </dl>
-              </section>
-            )}
+            <TermsCard title="What the insurer said" terms={letter} />
+            <TermsCard title="Your policy at a glance" terms={terms} />
             {ready ? (
               <>
                 <p className="mt-4 text-muted">Try one of these:</p>

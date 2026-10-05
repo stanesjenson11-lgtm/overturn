@@ -183,7 +183,7 @@ for (const [name, fields] of Object.entries(expectedTerms)) {
   const doc = byName.get(name);
   if (!doc) throw new Error(`Document ${name} is not seeded for ${EMAIL}`);
   const chunks = await listChunks(user.id, doc.id);
-  const terms = await extractKeyTerms(chunks).then(
+  const terms = await extractKeyTerms(doc.kind, chunks).then(
     (r) => r.terms,
     (e) => (console.error(`  key terms failed for ${name}:`, (e as Error).message.slice(0, 120)), []),
   );

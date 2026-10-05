@@ -17,6 +17,7 @@ import { extractKeyTerms, type KeyTerm } from "./terms";
 export async function ingest(
   userId: string,
   documentId: string,
+  kind: string,
   bytes: Uint8Array,
 ): Promise<{ pages: number; chunks: number }> {
   // Model tokens spent reading the upload count toward the same daily cap as
@@ -39,8 +40,8 @@ export async function ingest(
         "RETRIEVAL_DOCUMENT",
       ),
       // In parallel with embedding, and never a reason to fail the upload: a
-      // lease without a key terms card is still a lease you can ask about.
-      extractKeyTerms(chunks).then(
+      // document without a key-facts card is still a document you can ask about.
+      extractKeyTerms(kind, chunks).then(
         ({ terms, usage: u }) => (spend(u), terms),
         (e): KeyTerm[] | null => (console.error("key terms failed:", e), null),
       ),

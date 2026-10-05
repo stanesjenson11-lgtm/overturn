@@ -4,10 +4,12 @@ import { pathToFileURL } from "node:url";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 
 /**
- * Synthetic leases, generated rather than committed.
+ * Synthetic documents, generated rather than committed. Never ship a real
+ * person's policy or claim letter in a public repo.
  *
- * Never ship a real person's lease in a public repo. These two are written to
- * stress the chunker differently: MAPLE_COURT uses numbered clauses (the easy,
+ * The two leases are chunker test material from the LeaseLens engine, kept
+ * because they stress clause-boundary chunking differently: MAPLE_COURT uses
+ * numbered clauses (the easy,
  * common case) and GARDEN_FLAT is continuous prose with no numbering at all,
  * which is where clause-boundary chunking earns or loses its keep.
  *
@@ -102,9 +104,79 @@ The garden at the rear of the property belongs to this flat alone and is the ten
 
 The flat may not be sublet, and it may not be listed on any short term letting platform. A friend or relative may stay for up to three weeks without asking. Longer than that, or anything that amounts to a second person living in the flat, needs to be agreed with the owner first.`;
 
+/**
+ * A synthetic policy wording, numbered like real Indian ones. Its waiting
+ * periods and moratorium follow the 2024 rules; the eval's rejection letters
+ * test the agent against it. "Rs." because pdf-lib's standard fonts can't
+ * encode the rupee sign.
+ */
+export const SHIELD_POLICY = `SHIELD HEALTH INDIVIDUAL POLICY - POLICY WORDING
+Synthetic document for testing. Not a real insurance product.
+
+1. DEFINITIONS
+1.1 "Sum Insured" means the amount shown in the Policy Schedule, which is the most the Company will pay for all claims in a Policy Year.
+1.2 "Pre-Existing Disease" means any condition, ailment, injury or disease diagnosed by a physician, or for which medical advice or treatment was recommended or received, not more than 36 months before the date of commencement of the policy.
+1.3 "Continuous Coverage" means uninterrupted cover under this policy, including cover ported or migrated from another health insurance policy, without any break.
+1.4 "Grace Period" means thirty days after the premium due date, during which the policy may be renewed without loss of continuity.
+
+2. COVERAGE
+2.1 The Company will pay for in-patient hospitalisation of more than 24 consecutive hours, up to the Sum Insured.
+2.2 Room rent is payable up to 1% of the Sum Insured per day. Where a higher room category is chosen, associated medical expenses are payable in the proportion that the eligible room rent bears to the actual room rent. This proportionate deduction does not apply to pharmacy, consumables, implants, medical devices or diagnostics.
+2.3 Day care procedures listed in Annexure I are covered even where hospitalisation lasts less than 24 hours.
+2.4 A co-payment of 10% applies to every admissible claim where the insured person is aged 61 or above at the time of admission.
+
+3. WAITING PERIODS
+3.1 Initial waiting period: no claim is payable for an illness first diagnosed within 30 days of the first policy commencement, except a claim arising from an accident.
+3.2 Pre-existing diseases: expenses related to a Pre-Existing Disease declared in the proposal form are covered after 36 months of Continuous Coverage.
+3.3 Specified diseases: the following are covered only after 24 months of Continuous Coverage, unless caused by an accident: cataract, hernia, benign prostatic hypertrophy, knee replacement, gall bladder stones and sinusitis.
+
+4. EXCLUSIONS
+4.1 Cosmetic or plastic surgery, unless needed for reconstruction after an accident, burns or cancer.
+4.2 Treatment for alcoholism, drug or substance abuse.
+4.3 Spectacles, contact lenses and hearing aids.
+4.4 Experimental or unproven treatment.
+
+5. CLAIMS
+5.1 The insured person or the hospital shall inform the Company within 48 hours of an emergency admission, and at least 48 hours before a planned admission.
+5.2 Cashless requests are decided within one hour of receipt. For reimbursement claims, the Company or its TPA will obtain the required documents from the hospital.
+5.3 Where a claim is rejected, the Company will state the reasons in writing with reference to the specific clause of this policy.
+
+6. MORATORIUM
+6.1 After 60 continuous months of coverage, no claim under this policy shall be contestable on grounds of non-disclosure or misrepresentation, except on grounds of established fraud.
+
+7. GRIEVANCES
+7.1 A grievance may be sent to the Grievance Redressal Officer at grievance@shieldhealth.example. If it is not resolved, the policyholder may approach the Insurance Ombudsman.`;
+
+/**
+ * A rejection the moratorium should overturn: non-disclosure raised against a
+ * policy that (per the schedule the user is asked for) began in March 2019,
+ * 79 months before this admission.
+ */
+export const SHIELD_REJECTION = `SHIELD HEALTH INSURANCE LTD
+CLAIM REPUDIATION LETTER
+Synthetic document for testing.
+
+Date: 14/11/2025
+Claim Number: SH/CLM/2025/004512
+Policy Number: SH/IND/2019/118230
+Date of Admission: 02/10/2025
+Hospital: City Care Hospital, Pune
+Amount Claimed: Rs. 2,85,000
+Amount Payable: Nil
+
+Dear Policyholder,
+
+We have reviewed the above claim for treatment of coronary artery disease. Our review of the medical records shows that the insured person was diagnosed with hypertension in 2017, before the policy began, and this was not disclosed in the proposal form.
+
+The claim is therefore repudiated under Clause 3.2 (Pre-existing diseases) of the policy wording, for non-disclosure of a material fact.
+
+If you are not satisfied with this decision, you may write to our Grievance Redressal Officer.
+
+Claims Department`;
+
 const FIXTURES = {
-  "maple-court": MAPLE_COURT,
-  "garden-flat": GARDEN_FLAT,
+  "shield-policy": SHIELD_POLICY,
+  "shield-rejection": SHIELD_REJECTION,
 } as const;
 
 export type FixtureName = keyof typeof FIXTURES;
