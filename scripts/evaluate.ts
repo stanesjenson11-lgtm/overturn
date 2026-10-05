@@ -120,7 +120,7 @@ for (const c of cases) {
     citations = [];
     for await (const event of answerQuestion({
       userId: user.id,
-      documentId: doc.id,
+      documentIds: [doc.id],
       question: c.question,
       history: [],
     })) {

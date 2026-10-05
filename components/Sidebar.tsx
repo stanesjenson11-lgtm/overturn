@@ -3,20 +3,11 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { api, post, type Chat, type Doc } from "@/lib/client";
-import UploadDropzone from "./UploadDropzone";
+import { api, post, type Case } from "@/lib/client";
 
-/** Conversation fires this when an answer lands, so a fresh auto-title shows up
+/** CaseView fires this when an answer lands, so a fresh auto-title shows up
  *  without a reload. Cheaper than a store for the one thing that needs it. */
-export const REFRESH = "leaselens:refresh";
-
-const STATUS: Record<string, string> = {
-  pending: "queued",
-  parsing: "reading pages",
-  embedding: "indexing clauses",
-  ready: "ready",
-  failed: "failed",
-};
+export const REFRESH = "overturn:refresh";
 
 /**
  * Two-step delete, in place, without a modal.
@@ -26,7 +17,7 @@ const STATUS: Record<string, string> = {
  * focus trap to get wrong for something this small. Armed swaps the outline
  * bin for a filled accent one, so the state change is visible without text.
  */
-function DeleteButton({ what, onDelete }: { what: string; onDelete: () => Promise<void> }) {
+export function DeleteButton({ what, onDelete }: { what: string; onDelete: () => Promise<void> }) {
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -72,13 +63,10 @@ function DeleteButton({ what, onDelete }: { what: string; onDelete: () => Promis
 export default function Sidebar() {
   const router = useRouter();
   const pathname = usePathname();
-  const [docs, setDocs] = useState<Doc[]>([]);
-  const [chats, setChats] = useState<Chat[]>([]);
+  const [cases, setCases] = useState<Case[]>([]);
 
   const load = useCallback(async () => {
-    const [d, c] = await Promise.all([api<Doc[]>("/api/documents"), api<Chat[]>("/api/chats")]);
-    setDocs(d);
-    setChats(c);
+    setCases(await api<Case[]>("/api/cases"));
   }, []);
 
   useEffect(() => {
@@ -91,32 +79,16 @@ export default function Sidebar() {
     return () => window.removeEventListener(REFRESH, handler);
   }, [load]);
 
-  // Ingestion runs after the upload response returns, so the only way to learn
-  // it finished is to ask. Polling stops the moment nothing is in flight.
-  const working = docs.some((d) => d.status !== "ready" && d.status !== "failed");
-  useEffect(() => {
-    if (!working) return;
-    const t = setInterval(() => void load(), 2000);
-    return () => clearInterval(t);
-  }, [working, load]);
-
-  async function startChat(documentId: string) {
-    const chat = await post<Chat>("/api/chats", { documentId });
-    router.push(`/chat/${chat.id}`);
+  async function newCase() {
+    const created = await post<Case>("/api/cases", {});
+    router.push(`/cases/${created.id}`);
   }
 
-  async function removeChat(id: string) {
-    await api(`/api/chats/${id}`, { method: "DELETE" });
-    // Leaving the deleted chat on screen would show a conversation the server
-    // no longer has; step off it before the list reloads under us.
-    if (pathname === `/chat/${id}`) router.push("/chat");
-    await load();
-  }
-
-  async function removeDoc(id: string) {
-    // Chats hang off the document with ON DELETE SET NULL, so their history
-    // survives but can no longer be asked new questions.
-    await api(`/api/documents/${id}`, { method: "DELETE" });
+  async function removeCase(id: string) {
+    await api(`/api/cases/${id}`, { method: "DELETE" });
+    // Leaving the deleted case on screen would show documents the server no
+    // longer has; step off it before the list reloads under us.
+    if (pathname === `/cases/${id}`) router.push("/cases");
     await load();
   }
 
@@ -128,63 +100,37 @@ export default function Sidebar() {
 
   return (
     <aside className="flex h-dvh w-72 shrink-0 flex-col gap-5 overflow-y-auto border-r border-line bg-panel px-4 py-5">
-      <Link href="/chat" className="text-sm uppercase tracking-[0.2em] text-muted">
-        LeaseLens
+      <Link href="/cases" className="text-sm uppercase tracking-[0.2em] text-muted">
+        Overturn
       </Link>
 
-      <UploadDropzone onUploaded={load} />
-
-      <section>
-        <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">Documents</h2>
-        {docs.length === 0 && <p className="text-sm text-muted">Nothing uploaded yet.</p>}
-        <ul className="space-y-1">
-          {docs.map((d) => (
-            <li key={d.id} className="group flex items-center gap-1">
-              <button
-                type="button"
-                disabled={d.status !== "ready"}
-                onClick={() => void startChat(d.id)}
-                title={d.error ?? undefined}
-                className="min-w-0 flex-1 rounded-lg px-2 py-1.5 text-left transition hover:shadow-neu-sm disabled:opacity-60 disabled:hover:shadow-none"
-              >
-                <span className="block truncate text-sm">{d.filename}</span>
-                <span className="block text-xs text-muted">
-                  {d.status === "ready"
-                    ? `${d.page_count ?? "?"} pages · ask a question`
-                    : (STATUS[d.status] ?? d.status)}
-                  {d.status !== "ready" && d.status !== "failed" && " …"}
-                </span>
-              </button>
-              <DeleteButton what={d.filename} onDelete={() => removeDoc(d.id)} />
-            </li>
-          ))}
-        </ul>
-      </section>
+      <button
+        type="button"
+        onClick={() => void newCase()}
+        className="rounded-xl bg-accent px-3 py-2.5 text-sm font-medium text-accent-ink shadow-neu-sm transition active:shadow-neu-inset-sm"
+      >
+        New case
+      </button>
 
       <section className="flex-1">
-        <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">
-          Conversations
-        </h2>
-        {chats.length === 0 && (
-          <p className="text-sm text-muted">Pick a document above to start one.</p>
+        <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">Cases</h2>
+        {cases.length === 0 && (
+          <p className="text-sm text-muted">One case per rejected claim. Start one above.</p>
         )}
         <ul className="space-y-1">
-          {chats.map((c) => {
-            const active = pathname === `/chat/${c.id}`;
+          {cases.map((c) => {
+            const active = pathname === `/cases/${c.id}`;
             return (
               <li key={c.id} className="group flex items-center gap-1">
                 <Link
-                  href={`/chat/${c.id}`}
+                  href={`/cases/${c.id}`}
                   className={`min-w-0 flex-1 truncate rounded-lg px-2 py-1.5 text-sm transition ${
                     active ? "bg-accent text-accent-ink shadow-neu-sm" : "hover:shadow-neu-sm"
                   }`}
                 >
-                  {c.title ?? "New conversation"}
+                  {c.title ?? "New case"}
                 </Link>
-                <DeleteButton
-                  what={c.title ?? "this conversation"}
-                  onDelete={() => removeChat(c.id)}
-                />
+                <DeleteButton what={c.title ?? "this case"} onDelete={() => removeCase(c.id)} />
               </li>
             );
           })}

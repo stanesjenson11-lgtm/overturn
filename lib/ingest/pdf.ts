@@ -10,7 +10,8 @@ export type Page = { number: number; text: string };
 // the one users actually see.
 export const MAX_BYTES = (process.env.VERCEL ? 4 : 8) * 1024 * 1024;
 export const MAX_PAGES = 60;
-export const MAX_DOCS_PER_USER = 5;
+// Three documents a case at most (one per kind), so this is about five cases.
+export const MAX_DOCS_PER_USER = 15;
 
 /**
  * A scan is transcribed in one model call, so it has to fit in one response

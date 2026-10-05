@@ -1,9 +1,19 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { api, type Doc } from "@/lib/client";
+import { api, type Doc, type DocKind } from "@/lib/client";
 
-export default function UploadDropzone({ onUploaded }: { onUploaded: () => void }) {
+export default function UploadDropzone({
+  caseId,
+  kind,
+  prompt,
+  onUploaded,
+}: {
+  caseId: string;
+  kind: DocKind;
+  prompt: string;
+  onUploaded: () => void;
+}) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -18,6 +28,8 @@ export default function UploadDropzone({ onUploaded }: { onUploaded: () => void 
       // string bodies, so the browser writes the multipart boundary itself.
       const body = new FormData();
       body.append("file", file);
+      body.append("caseId", caseId);
+      body.append("kind", kind);
       await api<Doc>("/api/documents", { method: "POST", body });
       onUploaded();
     } catch (e) {
@@ -43,11 +55,11 @@ export default function UploadDropzone({ onUploaded }: { onUploaded: () => void 
           void upload(e.dataTransfer.files[0]);
         }}
         disabled={busy}
-        className={`w-full rounded-xl px-3 py-6 text-center text-sm transition ${
+        className={`w-full rounded-xl px-3 py-4 text-center text-sm transition ${
           over ? "bg-accent-soft text-accent shadow-neu-inset" : "text-muted shadow-neu-inset-sm hover:shadow-neu-inset"
         } disabled:opacity-60`}
       >
-        {busy ? "Uploading…" : "Drop a lease PDF, or click to choose"}
+        {busy ? "Uploading…" : prompt}
       </button>
 
       <input

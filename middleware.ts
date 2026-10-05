@@ -8,12 +8,12 @@ import { COOKIE } from "@/lib/auth/session";
  * Middleware decides which page the browser lands on; every route handler
  * independently re-derives the tenant via session() and every query filters on
  * it. If this file were deleted the app would still be secure — it would just
- * show signed-out users an empty chat screen instead of the login page.
+ * show signed-out users an empty case screen instead of the login page.
  *
  * Guarding data here instead would put the whole tenancy boundary one matcher
  * typo away from a full leak.
  */
-export const config = { matcher: ["/chat/:path*", "/admin", "/login", "/register"] };
+export const config = { matcher: ["/cases/:path*", "/admin", "/login", "/register"] };
 
 export async function middleware(req: NextRequest) {
   const token = req.cookies.get(COOKIE)?.value;
@@ -30,16 +30,16 @@ export async function middleware(req: NextRequest) {
   }
 
   const path = req.nextUrl.pathname;
-  if (!signedIn && (path.startsWith("/chat") || path === "/admin"))
+  if (!signedIn && (path.startsWith("/cases") || path === "/admin"))
     return NextResponse.redirect(new URL("/login", req.url));
   if (signedIn && (path === "/login" || path === "/register"))
-    return NextResponse.redirect(new URL("/chat", req.url));
+    return NextResponse.redirect(new URL("/cases", req.url));
 
   const res = NextResponse.next();
   // Signed-in screens must not survive a sign-out. Without no-store the back
-  // button restores the previous account's chat from the bfcache — fully
+  // button restores the previous account's case from the bfcache — fully
   // rendered, from memory, without a request the server could refuse.
-  if (path.startsWith("/chat") || path === "/admin")
+  if (path.startsWith("/cases") || path === "/admin")
     res.headers.set("cache-control", "private, no-store");
   return res;
 }

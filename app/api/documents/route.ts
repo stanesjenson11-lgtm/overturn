@@ -1,10 +1,26 @@
 import { after } from "next/server";
 import { session } from "@/lib/auth/session";
-import { countDocuments, createDocument, listDocuments } from "@/lib/db/queries";
+import {
+  countDocuments,
+  createDocument,
+  DOC_KINDS,
+  getCase,
+  listCaseDocuments,
+  listDocuments,
+  type DocKind,
+} from "@/lib/db/queries";
 import { ingest } from "@/lib/ingest";
 import { MAX_DOCS_PER_USER, validateUpload } from "@/lib/ingest/pdf";
-import { badRequest, json, route } from "@/lib/http";
+import { badRequest, json, notFound, route } from "@/lib/http";
 import { assertWithinDailyLimit } from "@/lib/limits";
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const KIND_LABEL: Record<DocKind, string> = {
+  policy: "policy wording",
+  rejection: "rejection letter",
+  medical: "medical document",
+};
 
 export const runtime = "nodejs";
 // Parse (or transcribe a scan) + chunk + embed + key terms has to finish inside
@@ -29,10 +45,22 @@ export const POST = route(async (req: Request) => {
   const file = form.get("file");
   if (!(file instanceof File)) throw badRequest("No file was uploaded.");
 
+  const kind = form.get("kind");
+  if (!DOC_KINDS.includes(kind as DocKind)) throw badRequest("Say what this document is.");
+
+  // The case id arrives from the client, so it is checked against this tenant
+  // before anything is stored: otherwise a document could be filed into
+  // someone else's case, and their next answer would quote it. A malformed id
+  // gets the same 404 as someone else's.
+  const caseId = String(form.get("caseId") ?? "");
+  if (!UUID.test(caseId) || !(await getCase(userId, caseId))) throw notFound();
+  if ((await listCaseDocuments(userId, caseId)).some((d) => d.kind === kind))
+    throw badRequest(`This case already has a ${KIND_LABEL[kind as DocKind]}. Delete it to upload another.`);
+
   const bytes = new Uint8Array(await file.arrayBuffer());
   validateUpload(bytes, file.name); // magic bytes and size, before parsing anything
 
-  const doc = await createDocument(userId, file.name);
+  const doc = await createDocument(userId, caseId, kind as DocKind, file.name);
 
   // after() keeps the invocation alive past the response, so the client gets an
   // id to poll immediately instead of holding a request open for 30 seconds.

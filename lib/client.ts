@@ -23,8 +23,11 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export const post = <T>(path: string, body: unknown) =>
   api<T>(path, { method: "POST", body: JSON.stringify(body) });
 
+export type DocKind = "policy" | "rejection" | "medical";
+
 export type Doc = {
   id: string;
+  kind: DocKind;
   filename: string;
   page_count: number | null;
   status: string;
@@ -34,7 +37,7 @@ export type Doc = {
 
 export type KeyTerm = { field: string; label: string; value: string; page: number };
 
-export type Chat = { id: string; document_id: string | null; title: string | null };
+export type Case = { id: string; title: string | null };
 
 export type Citation = {
   id: number;

@@ -60,7 +60,7 @@ const scored: { off: boolean; score: number; label: string }[] = [];
 for (const [i, p] of probes.entries()) {
   const docId = docs.get(p.document);
   if (!docId) throw new Error(`Document ${p.document} is not seeded for ${EMAIL}`);
-  const [top] = await denseSearch(user.id, docId, vectors[i], 1);
+  const [top] = await denseSearch(user.id, [docId], vectors[i], 1);
   scored.push({ off: p.off, score: Number(top?.score ?? 0), label: `${p.document.padEnd(12)} ${p.question}` });
 }
 

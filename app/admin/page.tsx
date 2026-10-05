@@ -28,7 +28,7 @@ export default function AdminPage() {
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-10">
-      <Link href="/chat" className="text-sm text-muted underline-offset-2 hover:underline">
+      <Link href="/cases" className="text-sm text-muted underline-offset-2 hover:underline">
         ← Back
       </Link>
 

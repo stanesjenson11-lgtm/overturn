@@ -43,8 +43,13 @@ export async function findUserById(id: string) {
 
 // ------------------------------------------------------------ documents
 
+export const DOC_KINDS = ["policy", "rejection", "medical"] as const;
+export type DocKind = (typeof DOC_KINDS)[number];
+
 export type Doc = {
   id: string;
+  case_id: string;
+  kind: DocKind;
   filename: string;
   page_count: number | null;
   status: string;
@@ -53,26 +58,39 @@ export type Doc = {
   created_at: string;
 };
 
-export async function createDocument(userId: string, filename: string) {
+export async function createDocument(
+  userId: string,
+  caseId: string,
+  kind: DocKind,
+  filename: string,
+) {
   const [d] = await tq<Doc>(
-    `INSERT INTO documents (user_id, filename) VALUES ($1, $2)
-     RETURNING id, filename, page_count, status, error, key_terms, created_at`,
-    [userId, filename],
+    `INSERT INTO documents (user_id, case_id, kind, filename) VALUES ($1, $2, $3, $4)
+     RETURNING id, case_id, kind, filename, page_count, status, error, key_terms, created_at`,
+    [userId, caseId, kind, filename],
   );
   return d;
 }
 
 export async function listDocuments(userId: string) {
   return tq<Doc>(
-    `SELECT id, filename, page_count, status, error, key_terms, created_at
+    `SELECT id, case_id, kind, filename, page_count, status, error, key_terms, created_at
      FROM documents WHERE user_id = $1 ORDER BY created_at DESC`,
     [userId],
   );
 }
 
+export async function listCaseDocuments(userId: string, caseId: string) {
+  return tq<Doc>(
+    `SELECT id, case_id, kind, filename, page_count, status, error, key_terms, created_at
+     FROM documents WHERE user_id = $1 AND case_id = $2 ORDER BY created_at`,
+    [userId, caseId],
+  );
+}
+
 export async function getDocument(userId: string, id: string) {
   const [d] = await tq<Doc>(
-    `SELECT id, filename, page_count, status, error, key_terms, created_at
+    `SELECT id, case_id, kind, filename, page_count, status, error, key_terms, created_at
      FROM documents WHERE user_id = $1 AND id = $2`,
     [userId, id],
   );
@@ -181,10 +199,17 @@ export async function listChunks(userId: string, documentId: string) {
   );
 }
 
-/** Dense half of the hybrid: cosine distance over the HNSW index. */
+/**
+ * Dense half of the hybrid: cosine distance over the HNSW index.
+ *
+ * Takes a list of document ids because a case's answer can sit in the policy
+ * or the rejection letter. The ids select *within* the tenant: an id that
+ * belongs to someone else still has to match `user_id = $1`, so it matches
+ * nothing.
+ */
 export async function denseSearch(
   userId: string,
-  documentId: string,
+  documentIds: string[],
   embedding: number[],
   limit: number,
 ) {
@@ -192,10 +217,10 @@ export async function denseSearch(
     `SELECT id::text AS id, content, heading_path, page_start, page_end,
             1 - (embedding <=> $3::vector) AS score
        FROM chunks
-      WHERE user_id = $1 AND document_id = $2
+      WHERE user_id = $1 AND document_id = ANY($2::uuid[])
       ORDER BY embedding <=> $3::vector
       LIMIT $4`,
-    [userId, documentId, toVector(embedding), limit],
+    [userId, documentIds, toVector(embedding), limit],
   );
 }
 
@@ -203,86 +228,89 @@ export async function denseSearch(
  *  exact term a paraphrase-matching embedding drifts past. */
 export async function keywordSearch(
   userId: string,
-  documentId: string,
+  documentIds: string[],
   query: string,
   limit: number,
 ) {
   return tq<Retrieved>(
     `SELECT id::text AS id, content, heading_path, page_start, page_end
        FROM chunks
-      WHERE user_id = $1 AND document_id = $2
+      WHERE user_id = $1 AND document_id = ANY($2::uuid[])
         AND tsv @@ plainto_tsquery('english', $3)
       ORDER BY ts_rank_cd(tsv, plainto_tsquery('english', $3)) DESC
       LIMIT $4`,
-    [userId, documentId, query, limit],
+    [userId, documentIds, query, limit],
   );
 }
 
-// ---------------------------------------------------------------- chats
+// ---------------------------------------------------------------- cases
 
-export type Chat = {
+export type Case = {
   id: string;
-  document_id: string | null;
   title: string | null;
   created_at: string;
 };
 
-export async function createChat(userId: string, documentId: string | null, title: string | null) {
-  const [c] = await tq<Chat>(
-    `INSERT INTO chats (user_id, document_id, title) VALUES ($1, $2, $3)
-     RETURNING id, document_id, title, created_at`,
-    [userId, documentId, title],
+export async function createCase(userId: string, title: string | null) {
+  const [c] = await tq<Case>(
+    `INSERT INTO cases (user_id, title) VALUES ($1, $2)
+     RETURNING id, title, created_at`,
+    [userId, title],
   );
   return c;
 }
 
-export async function listChats(userId: string) {
-  return tq<Chat>(
-    `SELECT id, document_id, title, created_at
-     FROM chats WHERE user_id = $1 ORDER BY created_at DESC`,
+export async function listCases(userId: string) {
+  return tq<Case>(
+    `SELECT id, title, created_at
+     FROM cases WHERE user_id = $1 ORDER BY created_at DESC`,
     [userId],
   );
 }
 
-export async function getChat(userId: string, id: string) {
-  const [c] = await tq<Chat>(
-    `SELECT id, document_id, title, created_at
-     FROM chats WHERE user_id = $1 AND id = $2`,
+export async function getCase(userId: string, id: string) {
+  const [c] = await tq<Case>(
+    `SELECT id, title, created_at
+     FROM cases WHERE user_id = $1 AND id = $2`,
     [userId, id],
   );
   return c;
 }
 
-/** messages cascade on the chats FK, so one statement is the whole delete.
- *  Returns false when the id belongs to someone else — same shape as
- *  deleteDocument, so the route answers 404 either way. */
-export async function deleteChat(userId: string, id: string) {
+/** Documents, chunks and messages cascade on the cases FK, so one statement
+ *  is the whole delete. Returns false when the id belongs to someone else —
+ *  same shape as deleteDocument, so the route answers 404 either way. */
+export async function deleteCase(userId: string, id: string) {
   const rows = await tq<{ id: string }>(
-    `DELETE FROM chats WHERE user_id = $1 AND id = $2 RETURNING id`,
+    `DELETE FROM cases WHERE user_id = $1 AND id = $2 RETURNING id`,
     [userId, id],
   );
   return rows.length > 0;
 }
 
 /**
- * Clears out this user's chats that were opened and never asked anything.
+ * Clears out this user's cases that were opened and never used: no document
+ * uploaded, no question asked.
  *
- * Clicking a document creates the chat row up front, so backing out without
- * typing leaves an untitled husk in the sidebar forever — titles only get
- * generated from the first question. Swept at the moment the next chat is
- * created, which is exactly when a new husk would otherwise be added.
+ * "New case" creates the row up front, so backing out leaves an untitled husk
+ * in the sidebar forever. Swept at the moment the next case is created, which
+ * is exactly when a new husk would otherwise be added.
  *
- * NOT EXISTS rather than `id NOT IN (SELECT chat_id ...)`: chat_id is NOT NULL
- * today, but NOT IN silently matches nothing the day a NULL appears in that
- * column, and a delete that quietly stops working is the worst kind.
+ * NOT EXISTS rather than `id NOT IN (SELECT case_id ...)`: NOT IN silently
+ * matches nothing the day a NULL appears in that column, and a delete that
+ * quietly stops working is the worst kind.
  */
-export async function deleteEmptyChats(userId: string) {
+export async function deleteEmptyCases(userId: string) {
   const rows = await tq<{ id: string }>(
-    `DELETE FROM chats
+    `DELETE FROM cases
       WHERE user_id = $1
         AND NOT EXISTS (
               SELECT 1 FROM messages
-               WHERE messages.chat_id = chats.id AND messages.user_id = $1
+               WHERE messages.case_id = cases.id AND messages.user_id = $1
+            )
+        AND NOT EXISTS (
+              SELECT 1 FROM documents
+               WHERE documents.case_id = cases.id AND documents.user_id = $1
             )
      RETURNING id`,
     [userId],
@@ -290,8 +318,8 @@ export async function deleteEmptyChats(userId: string) {
   return rows.length;
 }
 
-export async function setChatTitle(userId: string, id: string, title: string) {
-  await tq(`UPDATE chats SET title = $3 WHERE user_id = $1 AND id = $2`, [userId, id, title]);
+export async function setCaseTitle(userId: string, id: string, title: string) {
+  await tq(`UPDATE cases SET title = $3 WHERE user_id = $1 AND id = $2`, [userId, id, title]);
 }
 
 // ------------------------------------------------------------- messages
@@ -304,25 +332,25 @@ export type Message = {
   created_at: string;
 };
 
-export async function listMessages(userId: string, chatId: string) {
+export async function listMessages(userId: string, caseId: string) {
   return tq<Message>(
     `SELECT id::text AS id, role, content, citations, created_at
-       FROM messages WHERE user_id = $1 AND chat_id = $2 ORDER BY id`,
-    [userId, chatId],
+       FROM messages WHERE user_id = $1 AND case_id = $2 ORDER BY id`,
+    [userId, caseId],
   );
 }
 
 export async function insertMessage(
   userId: string,
-  chatId: string,
+  caseId: string,
   role: "user" | "assistant",
   content: string,
   citations: unknown = null,
 ) {
   const [m] = await tq<{ id: string }>(
-    `INSERT INTO messages (user_id, chat_id, role, content, citations)
+    `INSERT INTO messages (user_id, case_id, role, content, citations)
      VALUES ($1, $2, $3, $4, $5) RETURNING id::text AS id`,
-    [userId, chatId, role, content, citations === null ? null : JSON.stringify(citations)],
+    [userId, caseId, role, content, citations === null ? null : JSON.stringify(citations)],
   );
   return m;
 }
@@ -352,10 +380,10 @@ export async function bumpUsage(userId: string, inTokens: number, outTokens: num
 
 // --------------------------------------------------------------- traces
 
-export async function insertTrace(userId: string, chatId: string | null, spans: unknown) {
-  await tq(`INSERT INTO traces (user_id, chat_id, spans) VALUES ($1, $2, $3)`, [
+export async function insertTrace(userId: string, caseId: string | null, spans: unknown) {
+  await tq(`INSERT INTO traces (user_id, case_id, spans) VALUES ($1, $2, $3)`, [
     userId,
-    chatId,
+    caseId,
     JSON.stringify(spans),
   ]);
 }

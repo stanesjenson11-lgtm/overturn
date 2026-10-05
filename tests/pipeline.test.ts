@@ -18,7 +18,7 @@ vi.mock("@/lib/rag/embed", async (importOriginal) => ({
 
 const { setGenAI } = await import("@/lib/llm");
 const { answerQuestion } = await import("@/lib/rag/pipeline");
-const { createDocument, insertChunks } = await import("@/lib/db/queries");
+const { createCase, createDocument, insertChunks } = await import("@/lib/db/queries");
 const { startTestDb, stopTestDb, fakeEmbedding } = await import("./db");
 
 const USER = "c0ffee00-0000-4000-8000-000000000001";
@@ -94,7 +94,8 @@ beforeAll(async () => {
     USER,
     "pipeline@example.com",
   ]);
-  const doc = await createDocument(USER, "lease.pdf");
+  const claim = await createCase(USER, null);
+  const doc = await createDocument(USER, claim.id, "policy", "policy.pdf");
   documentId = doc.id;
 
   await insertChunks(USER, documentId, [
@@ -129,7 +130,7 @@ const drain = async (events: AsyncGenerator<any>) => {
 };
 
 const run = (question = "when do I get my deposit back?", history: any[] = []) =>
-  drain(answerQuestion({ userId: USER, documentId, question, history }));
+  drain(answerQuestion({ userId: USER, documentIds: [documentId], question, history }));
 
 describe("the pipeline", () => {
   it("streams an answer with citations attached", async () => {

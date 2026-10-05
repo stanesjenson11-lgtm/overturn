@@ -97,7 +97,7 @@ server.registerTool(
 
     for await (const event of answerQuestion({
       userId: user.id,
-      documentId: doc.id,
+      documentIds: [doc.id],
       question,
       history: [],
     })) {

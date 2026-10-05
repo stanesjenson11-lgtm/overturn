@@ -32,7 +32,7 @@ export const OFF_TOPIC_REPLY =
  */
 export async function* answerQuestion(opts: {
   userId: string;
-  documentId: string;
+  documentIds: string[];
   question: string;
   history: Turn[];
 }): AsyncGenerator<PipelineEvent> {
@@ -56,7 +56,7 @@ export async function* answerQuestion(opts: {
 
     // ---- 2. retrieve (both halves tenant-scoped in SQL)
     stop = clock();
-    const found = await hybridSearch(opts.userId, opts.documentId, query, CANDIDATES);
+    const found = await hybridSearch(opts.userId, opts.documentIds, query, CANDIDATES);
     let candidates: Clause[] = found.clauses;
     yield { type: "stage", ...stop("retrieve", `${candidates.length} candidates`) };
 
@@ -85,7 +85,7 @@ export async function* answerQuestion(opts: {
       stop = clock();
       const { clauses: widened } = await hybridSearch(
         opts.userId,
-        opts.documentId,
+        opts.documentIds,
         verdict.searchFor,
         CANDIDATES,
       );

@@ -22,8 +22,8 @@ describe("the tenant guard", () => {
   it("flags an unscoped statement", () => {
     // The negative control. If this ever returns null, the check below is
     // meaningless no matter how green it is.
-    expect(tenancyViolation("SELECT * FROM chats WHERE id = $1")).toContain("chats");
-    expect(tenancyViolation("INSERT INTO messages (chat_id, role) VALUES ($1, $2)")).toContain(
+    expect(tenancyViolation("SELECT * FROM cases WHERE id = $1")).toContain("cases");
+    expect(tenancyViolation("INSERT INTO messages (case_id, role) VALUES ($1, $2)")).toContain(
       "messages",
     );
     expect(tenancyViolation("DELETE FROM documents WHERE id = $1")).toContain("documents");
@@ -41,10 +41,10 @@ describe("the tenant guard", () => {
       // the database and not the caller's discipline.
       setExecutor(async () => [{ someone_elses: "lease" }]);
 
-      await expect(tq("SELECT * FROM chats WHERE id = $1", ["x"])).rejects.toThrow(
+      await expect(tq("SELECT * FROM cases WHERE id = $1", ["x"])).rejects.toThrow(
         TenancyViolation,
       );
-      await expect(tq("SELECT * FROM chats WHERE user_id = $1", ["x"])).resolves.toHaveLength(1);
+      await expect(tq("SELECT * FROM cases WHERE user_id = $1", ["x"])).resolves.toHaveLength(1);
     });
   });
 

@@ -21,7 +21,7 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
     try {
       await post(`/api/auth/${mode}`, { email, password });
       // The session cookie is already set by the response; nothing to store.
-      router.push("/chat");
+      router.push("/cases");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");

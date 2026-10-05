@@ -1,6 +1,7 @@
 -- Applied idempotently on every `npm run migrate` and by the test harness.
--- One database holds vectors, the keyword index, users and chat history, so
--- tenant scoping is a single predicate rather than a per-store problem.
+-- One database holds vectors, the keyword index, users, cases and their
+-- history, so tenant scoping is a single predicate rather than a per-store
+-- problem.
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -11,22 +12,35 @@ CREATE TABLE IF NOT EXISTS users (
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 
+-- A case is one rejected claim: the documents that explain it and the
+-- conversation about it.
+CREATE TABLE IF NOT EXISTS cases (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    uuid NOT NULL REFERENCES users ON DELETE CASCADE,
+  title      text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- user_id is denormalized onto every table below on purpose: every scoped
+-- query becomes a single-table filter with no join to get wrong.
+--
+-- One document of each kind per case, enforced here rather than in a route:
+-- a constraint can't be raced by two uploads in flight.
+-- ponytail: one medical document per case; a list of them when a real case
+-- needs a discharge summary AND bills.
 CREATE TABLE IF NOT EXISTS documents (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id    uuid NOT NULL REFERENCES users ON DELETE CASCADE,
+  case_id    uuid NOT NULL REFERENCES cases ON DELETE CASCADE,
+  kind       text NOT NULL CHECK (kind IN ('policy', 'rejection', 'medical')),
   filename   text NOT NULL,
   page_count int,
   status     text NOT NULL DEFAULT 'pending',
   error      text,
-  created_at timestamptz NOT NULL DEFAULT now()
+  key_terms  jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (case_id, kind)
 );
-
--- user_id is denormalized onto chunks and messages on purpose: every scoped
--- query becomes a single-table filter with no join to get wrong.
--- Added after launch, so ALTER rather than in the CREATE: an existing database
--- gets the column on its next migrate. Null means extraction failed or never
--- ran; an empty array means it ran and nothing survived grounding.
-ALTER TABLE documents ADD COLUMN IF NOT EXISTS key_terms jsonb;
 
 CREATE TABLE IF NOT EXISTS chunks (
   id           bigserial PRIMARY KEY,
@@ -41,17 +55,9 @@ CREATE TABLE IF NOT EXISTS chunks (
   tsv          tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED
 );
 
-CREATE TABLE IF NOT EXISTS chats (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id     uuid NOT NULL REFERENCES users ON DELETE CASCADE,
-  document_id uuid REFERENCES documents ON DELETE SET NULL,
-  title       text,
-  created_at  timestamptz NOT NULL DEFAULT now()
-);
-
 CREATE TABLE IF NOT EXISTS messages (
   id         bigserial PRIMARY KEY,
-  chat_id    uuid NOT NULL REFERENCES chats ON DELETE CASCADE,
+  case_id    uuid NOT NULL REFERENCES cases ON DELETE CASCADE,
   user_id    uuid NOT NULL REFERENCES users ON DELETE CASCADE,
   role       text NOT NULL,
   content    text NOT NULL,
@@ -71,16 +77,16 @@ CREATE TABLE IF NOT EXISTS usage (
 CREATE TABLE IF NOT EXISTS traces (
   id         bigserial PRIMARY KEY,
   user_id    uuid NOT NULL REFERENCES users ON DELETE CASCADE,
-  chat_id    uuid,
+  case_id    uuid,
   spans      jsonb NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS chunks_tenant_idx ON chunks (user_id, document_id);
-CREATE INDEX IF NOT EXISTS chunks_tsv_idx    ON chunks USING gin (tsv);
-CREATE INDEX IF NOT EXISTS documents_user_idx ON documents (user_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS chats_user_idx     ON chats (user_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS messages_chat_idx  ON messages (user_id, chat_id, id);
+CREATE INDEX IF NOT EXISTS chunks_tenant_idx  ON chunks (user_id, document_id);
+CREATE INDEX IF NOT EXISTS chunks_tsv_idx     ON chunks USING gin (tsv);
+CREATE INDEX IF NOT EXISTS cases_user_idx     ON cases (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS documents_case_idx ON documents (user_id, case_id);
+CREATE INDEX IF NOT EXISTS messages_case_idx  ON messages (user_id, case_id, id);
 CREATE INDEX IF NOT EXISTS traces_user_idx    ON traces (user_id, created_at DESC);
 
 -- Last, and separately: HNSW build is the one statement that can fail on a

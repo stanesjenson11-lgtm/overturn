@@ -2,11 +2,12 @@ import { z } from "zod";
 import { after } from "next/server";
 import { session } from "@/lib/auth/session";
 import {
-  getChat,
+  getCase,
   insertMessage,
   insertTrace,
+  listCaseDocuments,
   listMessages,
-  setChatTitle,
+  setCaseTitle,
 } from "@/lib/db/queries";
 import { assertWithinDailyLimit, recordUsage } from "@/lib/limits";
 import { badRequest, notFound, route } from "@/lib/http";
@@ -24,9 +25,12 @@ export const POST = route(async (req: Request, ctx: Ctx) => {
   const { userId } = await session(req);
   const { id } = await ctx.params;
 
-  const chat = await getChat(userId, id);
-  if (!chat) throw notFound();
-  if (!chat.document_id) throw badRequest("This chat has no document attached.");
+  const found = await getCase(userId, id);
+  if (!found) throw notFound();
+  const documentIds = (await listCaseDocuments(userId, id))
+    .filter((d) => d.status === "ready")
+    .map((d) => d.id);
+  if (!documentIds.length) throw badRequest("Upload the policy and the rejection letter first.");
 
   const parsed = Body.safeParse(await req.json());
   if (!parsed.success) throw badRequest("Ask a question of at least a few words.");
@@ -40,7 +44,7 @@ export const POST = route(async (req: Request, ctx: Ctx) => {
   }));
 
   await insertMessage(userId, id, "user", question);
-  if (!chat.title) after(async () => setChatTitle(userId, id, await titleFor(question)));
+  if (!found.title) after(async () => setCaseTitle(userId, id, await titleFor(question)));
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -51,7 +55,7 @@ export const POST = route(async (req: Request, ctx: Ctx) => {
       try {
         for await (const event of answerQuestion({
           userId,
-          documentId: chat.document_id!,
+          documentIds,
           question,
           history,
         })) {

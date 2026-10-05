@@ -1,29 +1,50 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
-import { api, type Chat, type Citation, type Doc, type KeyTerm, type Msg } from "@/lib/client";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { api, type Case, type Citation, type Doc, type DocKind, type Msg } from "@/lib/client";
 import { AnswerText } from "./CitationChip";
-import { REFRESH } from "./Sidebar";
+import { DeleteButton, REFRESH } from "./Sidebar";
+import UploadDropzone from "./UploadDropzone";
 
 const STAGE_LABEL: Record<string, string> = {
   rewrite: "reading the conversation",
-  retrieve: "searching the lease",
-  gate: "checking the question is about the lease",
+  retrieve: "searching your documents",
+  gate: "checking the question is about this claim",
   rerank: "ranking clauses",
   grade: "checking the clauses answer it",
   retry: "widening the search",
   answer: "writing",
 };
 
-/** One deliberately unanswerable prompt, so the refusal gets discovered by
- *  anyone who clicks around rather than only by someone who knows to look. */
-const SUGGESTIONS = [
-  "Can my landlord keep my deposit for normal wear and tear?",
-  "How much notice do I have to give before moving out?",
-  "Am I allowed to keep a python?",
+const STATUS: Record<string, string> = {
+  pending: "queued",
+  parsing: "reading pages",
+  embedding: "indexing clauses",
+  ready: "ready",
+  failed: "failed",
+};
+
+const SLOTS: { kind: DocKind; label: string; prompt: string; optional?: boolean }[] = [
+  { kind: "policy", label: "Policy wording", prompt: "Drop the policy wording PDF" },
+  { kind: "rejection", label: "Rejection letter", prompt: "Drop the rejection letter (a scan is fine)" },
+  {
+    kind: "medical",
+    label: "Discharge summary",
+    prompt: "Optional: discharge summary",
+    optional: true,
+  },
 ];
 
-export default function Conversation({ chatId }: { chatId: string }) {
+/** One question the documents may well not answer, so declining gets
+ *  discovered by anyone who clicks around, not only by someone who knows to look. */
+const SUGGESTIONS = [
+  "Why was my claim rejected, and does my policy actually say that?",
+  "How long is the waiting period for pre-existing diseases in my policy?",
+  "Does my policy cover robotic surgery?",
+];
+
+export default function CaseView({ caseId }: { caseId: string }) {
+  const [docs, setDocs] = useState<Doc[]>([]);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [question, setQuestion] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -31,33 +52,49 @@ export default function Conversation({ chatId }: { chatId: string }) {
   const [draft, setDraft] = useState("");
   const [citations, setCitations] = useState<Citation[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [terms, setTerms] = useState<KeyTerm[]>([]);
   const bottom = useRef<HTMLDivElement>(null);
 
+  const load = useCallback(async () => {
+    try {
+      const d = await api<{ case: Case; documents: Doc[]; messages: Msg[] }>(`/api/cases/${caseId}`);
+      setDocs(d.documents);
+      setMessages(d.messages);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't load this case.");
+    }
+  }, [caseId]);
+
   useEffect(() => {
-    void api<{ chat: Chat; messages: Msg[] }>(`/api/chats/${chatId}`)
-      .then((d) => {
-        setMessages(d.messages);
-        // The card only shows on an empty chat, so only an empty chat fetches it.
-        // A failure here costs a nice-to-have, not the conversation.
-        if (d.chat.document_id && d.messages.length === 0)
-          void api<Doc>(`/api/documents/${d.chat.document_id}`)
-            .then((doc) => setTerms(doc.key_terms ?? []))
-            .catch(() => {});
-      })
-      .catch((e) => setError(e.message));
-  }, [chatId]);
+    void load();
+  }, [load]);
+
+  // Ingestion runs after the upload response returns, so the only way to learn
+  // it finished is to ask. Polling stops the moment nothing is in flight.
+  const working = docs.some((d) => d.status !== "ready" && d.status !== "failed");
+  useEffect(() => {
+    if (!working) return;
+    const t = setInterval(() => void load(), 2000);
+    return () => clearInterval(t);
+  }, [working, load]);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, draft, stage]);
 
+  const ready = docs.some((d) => d.status === "ready");
+  const terms = docs.find((d) => d.kind === "policy")?.key_terms ?? [];
+
+  async function removeDoc(id: string) {
+    await api(`/api/documents/${id}`, { method: "DELETE" });
+    await load();
+  }
+
   async function ask(text: string) {
-    if (!text.trim() || streaming) return;
+    if (!text.trim() || streaming || !ready) return;
     setQuestion("");
     setError(null);
     setStreaming(true);
-    setStage("searching the lease");
+    setStage(STAGE_LABEL.retrieve);
     setDraft("");
     setCitations([]);
     setMessages((m) => [
@@ -66,7 +103,7 @@ export default function Conversation({ chatId }: { chatId: string }) {
     ]);
 
     try {
-      const res = await fetch(`/api/chats/${chatId}/messages`, {
+      const res = await fetch(`/api/cases/${caseId}/messages`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ question: text }),
@@ -129,23 +166,46 @@ export default function Conversation({ chatId }: { chatId: string }) {
   return (
     <div className="flex h-dvh flex-1 flex-col">
       <div className="mx-auto w-full max-w-3xl flex-1 overflow-y-auto px-6 py-8">
+        <section aria-labelledby="docs" className="grid gap-3 sm:grid-cols-3">
+          <h2 id="docs" className="sr-only">
+            Documents in this case
+          </h2>
+          {SLOTS.map((slot) => {
+            const doc = docs.find((d) => d.kind === slot.kind);
+            return (
+              <div key={slot.kind}>
+                <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted">
+                  {slot.label}
+                </p>
+                {doc ? (
+                  <div className="group flex items-center gap-1 rounded-xl px-3 py-2.5 shadow-neu-sm">
+                    <div className="min-w-0 flex-1" title={doc.error ?? undefined}>
+                      <p className="truncate text-sm">{doc.filename}</p>
+                      <p className={`text-xs ${doc.status === "failed" ? "text-accent" : "text-muted"}`}>
+                        {doc.status === "ready"
+                          ? `${doc.page_count ?? "?"} pages`
+                          : doc.status === "failed"
+                            ? (doc.error ?? "failed")
+                            : `${STATUS[doc.status] ?? doc.status} …`}
+                      </p>
+                    </div>
+                    <DeleteButton what={doc.filename} onDelete={() => removeDoc(doc.id)} />
+                  </div>
+                ) : (
+                  <UploadDropzone caseId={caseId} kind={slot.kind} prompt={slot.prompt} onUploaded={load} />
+                )}
+              </div>
+            );
+          })}
+        </section>
+
         {messages.length === 0 && !streaming && (
-          <div className="mt-16 max-w-lg">
-            <div className="mb-5 flex size-11 items-center justify-center rounded-2xl text-accent shadow-neu-sm">
-              <svg viewBox="0 0 24 24" fill="none" className="size-5">
-                <path
-                  d="M7 3.5h7l4 4V19a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 19V5a1.5 1.5 0 0 1 1-1.5Z"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                />
-                <path d="M9.5 12h5M9.5 15.5h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-            </div>
-            <h1 className="font-serif text-2xl">What does your lease say?</h1>
+          <div className="mt-10 max-w-lg">
+            <h1 className="font-serif text-2xl">What do your documents say?</h1>
             {terms.length > 0 && (
               <section aria-labelledby="glance" className="mt-6 rounded-2xl p-5 shadow-neu-sm">
                 <h2 id="glance" className="text-xs font-medium uppercase tracking-wide text-muted">
-                  At a glance
+                  Your policy at a glance
                 </h2>
                 <dl className="mt-3 grid grid-cols-[auto_1fr_auto] gap-x-4 gap-y-2 text-sm">
                   {terms.map((t) => (
@@ -158,24 +218,33 @@ export default function Conversation({ chatId }: { chatId: string }) {
                 </dl>
               </section>
             )}
-            <p className="mt-2 text-muted">Try one of these:</p>
-            <ul className="mt-5 space-y-3">
-              {SUGGESTIONS.map((s) => (
-                <li key={s}>
-                  <button
-                    type="button"
-                    onClick={() => void ask(s)}
-                    className="w-full rounded-xl px-4 py-3 text-left text-sm shadow-neu-sm transition hover:shadow-neu active:shadow-neu-inset-sm"
-                  >
-                    {s}
-                  </button>
-                </li>
-              ))}
-            </ul>
+            {ready ? (
+              <>
+                <p className="mt-4 text-muted">Try one of these:</p>
+                <ul className="mt-4 space-y-3">
+                  {SUGGESTIONS.map((s) => (
+                    <li key={s}>
+                      <button
+                        type="button"
+                        onClick={() => void ask(s)}
+                        className="w-full rounded-xl px-4 py-3 text-left text-sm shadow-neu-sm transition hover:shadow-neu active:shadow-neu-inset-sm"
+                      >
+                        {s}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p className="mt-3 text-muted">
+                Add the policy wording and the insurer&apos;s rejection letter above. Questions open
+                up once a document is indexed.
+              </p>
+            )}
           </div>
         )}
 
-        <ol className="space-y-8">
+        <ol className="mt-8 space-y-8">
           {messages.map((m) =>
             m.role === "user" ? (
               <li key={m.id} className="flex justify-end">
@@ -186,7 +255,7 @@ export default function Conversation({ chatId }: { chatId: string }) {
             ) : (
               <li key={m.id} className="flex gap-3">
                 <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-accent shadow-neu-inset-sm">
-                  LL
+                  OT
                 </span>
                 <div className="min-w-0 flex-1">
                   <AnswerText content={m.content} citations={m.citations} />
@@ -198,7 +267,7 @@ export default function Conversation({ chatId }: { chatId: string }) {
           {streaming && (
             <li className="flex gap-3">
               <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-accent shadow-neu-inset-sm">
-                LL
+                OT
               </span>
               <div className="min-w-0 flex-1">
                 {draft ? (
@@ -234,13 +303,13 @@ export default function Conversation({ chatId }: { chatId: string }) {
           <input
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
-            placeholder="Ask about a clause, a deadline, a deposit…"
-            disabled={streaming}
+            placeholder={ready ? "Ask about the rejection, a clause, a waiting period…" : "Upload a document to start"}
+            disabled={streaming || !ready}
             className="flex-1 rounded-full px-4 py-3 text-sm text-ink shadow-neu-inset outline-none placeholder:text-muted disabled:opacity-60"
           />
           <button
             type="submit"
-            disabled={streaming || !question.trim()}
+            disabled={streaming || !ready || !question.trim()}
             aria-label="Ask"
             className="flex size-11 shrink-0 items-center justify-center rounded-full bg-accent text-accent-ink shadow-neu-sm transition active:shadow-neu-inset-sm disabled:opacity-40"
           >
@@ -250,7 +319,7 @@ export default function Conversation({ chatId }: { chatId: string }) {
           </button>
         </div>
         <p className="mx-auto max-w-3xl px-6 pb-3 text-xs text-muted">
-          Information from your document, not legal advice.
+          Information from your documents, not legal or medical advice.
         </p>
       </form>
     </div>

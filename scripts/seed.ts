@@ -5,6 +5,7 @@ import { required } from "./env";
 import { hashPassword } from "@/lib/auth/password";
 import { applySchema } from "@/lib/db/migrate";
 import {
+  createCase,
   createDocument,
   createUser,
   findUserByEmail,
@@ -51,7 +52,10 @@ for (const [name, file] of Object.entries(fixtures)) {
     continue;
   }
 
-  const doc = await createDocument(user.id, filename);
+  // ponytail: one case per fixture, filed as its policy; Phase 8 replaces these
+  // lease fixtures with synthetic policies and rejection letters.
+  const seededCase = await createCase(user.id, name);
+  const doc = await createDocument(user.id, seededCase.id, "policy", filename);
   const { pages, chunks } = await ingest(user.id, doc.id, readFileSync(file));
   console.log(`${filename} — ${pages} pages, ${chunks} chunks`);
 }
