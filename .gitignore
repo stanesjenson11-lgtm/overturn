@@ -23,3 +23,6 @@ Thumbs.db
 .vscode/
 .idea/
 .impeccable/
+
+# Public regulation PDFs: downloaded by scripts/ingest-regulations.ts, not committed
+corpus/
