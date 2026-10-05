@@ -60,8 +60,8 @@ policy's pre-existing-disease clause.
  │ rejection letter ──┼─ ingest ─┼──────►│ chunks (tenant-scoped)        │
  │ discharge summary ─┘ (scans   │       │ pgvector + tsvector           │
  │                      read by  │       └──────────────────────────────┘
- │                      Gemini /  │       ┌──────────────────────────────┐
- │                      Gemma)    │       │ reg_chunks (public)           │
+ │                      Flash-   │       ┌──────────────────────────────┐
+ │                      Lite)    │       │ reg_chunks (public)           │
  └───────────────────────────────┘       │ IRDAI circular + regulations, │
                                           │ Ombudsman Rules: 287 clauses  │
  Agent (bounded tool loop)                └──────────────────────────────┘
@@ -158,11 +158,25 @@ Rejection letters usually arrive as scans. `npm run scan-bench` renders each
 fixture as a seeded scan (rasterised, tilted, speckled, saved as JPEG inside
 an image-only PDF) and has each model read it through the production path.
 
-SCAN_TABLE
+| Model | Mean CER | Letter facts kept | Median per document | Failed |
+| --- | --- | --- | --- | --- |
+| `gemini-3.1-flash-lite` | **0.13%** | 6/7 | **12.8s** | none |
+| `gemma-4-31b-it` | **0.12%** | (didn't finish) | 53.6s | 1 of 4 (server 500) |
+| `gemma-4-26b-a4b-it` | 12.42% | 3/7 | 9.2s | 3 of 4 (no answer within 5 min) |
+| `gemini-3.7-flash` | (not run) | | | 20 requests a day on the free tier |
+
+**Gemma 4 31B reads scans as accurately as Gemini Flash-Lite, but takes four
+times as long, and was less reliable on the free API.** A 15-page scan has to
+finish inside one upload, so Flash-Lite is the default. The first run of this
+benchmark also found that `gemini-3.7-flash` allows 20 requests a day per
+project, which ruled it out as a scan reader for a public app before quality
+came into it (and moved the eval's judge to Gemma 4 31B, where latency doesn't
+matter).
 
 A spike settled the plumbing first: Gemma 4 on the Gemini API reads an
 image-only PDF directly and accepts a system instruction and JSON mode, so the
-scan path just takes a model name.
+scan path just takes a model name. Four documents is a small sample; the
+script is there to re-run when Gemma's free-API latency changes.
 
 ---
 

@@ -189,6 +189,21 @@ describe("the agent loop", () => {
     expect(requests[0].config.toolConfig.functionCallingConfig.mode).toBe("ANY");
   });
 
+  it("briefs a review with the whole letter and the governing rules before the first call", async () => {
+    const requests = scripted([[{ text: "Done." }]]);
+    for await (const _ of reviewCase({
+      userId: USER,
+      documentIds,
+      question: "Review this.",
+      history: [],
+      letterId: documentIds[0],
+      review: true,
+    }));
+    const briefing = requests[0].contents.at(-1).parts[0].text;
+    expect(briefing).toMatch(/THE REJECTION LETTER, IN FULL[\s\S]*<passage id="P1"/);
+    expect(briefing).toMatch(/IRDAI RULES[\s\S]*<passage id="R1"[^>]*document="IRDAI \(Insurance Products\)/);
+  });
+
   it("reads '[P1, R1]' as two citations, however the model bracketed them", async () => {
     scripted([
       [call("search_policy", { query: "pre-existing" })],

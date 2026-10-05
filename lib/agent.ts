@@ -4,7 +4,8 @@ import { addUsage, AGENT_MODEL, genAI, withRetry, type Usage } from "./llm";
 import { rerank } from "./rag/rerank";
 import { hybridSearch, searchRegulations } from "./rag/search";
 import type { Citation, Clause, Span } from "./rag/types";
-import { RULES } from "./rules";
+import { RULES, type RuleResult } from "./rules";
+import { listClauses } from "./db/queries";
 
 /**
  * The agent that reviews a rejected claim. Ported from a product-advisor
@@ -45,6 +46,7 @@ export type AgentEvent =
       citations: Citation[];
       usage: Usage;
       spans: Span[];
+      checks: RuleResult[];
       verdict?: Verdict;
       questionnaire?: Questionnaire;
     }
@@ -241,6 +243,8 @@ export async function* reviewCase(opts: {
   question: string;
   history: Turn[];
   facts?: { letter: KeyTerm[]; policy: KeyTerm[] };
+  /** The rejection letter: short enough to read whole, so it always is. */
+  letterId?: string;
   /**
    * A review must end in a verdict or a question, never in prose: the model
    * is put in "must call a function" mode, so it can't drift into a
@@ -253,6 +257,7 @@ export async function* reviewCase(opts: {
   const cited = new Map<string, Citation>();
   const byChunk = new Map<string, string>();
   const counters = { P: 0, R: 0 };
+  const checks: RuleResult[] = [];
   let verdict: Verdict | undefined;
   let questionnaire: Questionnaire | undefined;
 
@@ -311,7 +316,9 @@ export async function* reviewCase(opts: {
       if (!Object.hasOwn(RULES, rule))
         return { response: { error: `Unknown rule. Use one of: ${Object.keys(RULES).join(", ")}.` } };
       try {
-        return { response: { ...(RULES[rule] as (f: object) => object)(args) }, note: String(rule) };
+        const result = (RULES[rule] as (f: object) => RuleResult)(args);
+        checks.push(result);
+        return { response: { ...result }, note: String(rule) };
       } catch (e) {
         return { response: { error: `${(e as Error).message}. Pass dates as YYYY-MM-DD.` } };
       }
@@ -342,13 +349,18 @@ export async function* reviewCase(opts: {
     return { response: { error: `Unknown tool "${name}".` } };
   }
 
-  const contents: Content[] = [
-    ...opts.history.slice(-HISTORY_TURNS).map((t) => ({
-      role: t.role === "user" ? "user" : "model",
-      parts: [{ text: t.content }],
-    })),
-    { role: "user", parts: [{ text: `${factsBlock(opts.facts ?? { letter: [], policy: [] })}${opts.question}` }] },
-  ];
+  const render = (ps: ReturnType<typeof passages>) =>
+    ps
+      .map(
+        (p) =>
+          `<passage id="${p.id}" pages="${p.pages}"${p.heading ? ` heading="${p.heading.replace(/"/g, "'")}"` : ""}${"document" in p ? ` document="${p.document}"` : ""}>\n${p.text}\n</passage>`,
+      )
+      .join("\n");
+
+  const contents: Content[] = opts.history.slice(-HISTORY_TURNS).map((t) => ({
+    role: t.role === "user" ? "user" : "model",
+    parts: [{ text: t.content }],
+  }));
 
   const finish = (raw: string): AgentEvent => {
     // One id per bracket, whatever the model wrote: "[P1, P2]" becomes
@@ -369,12 +381,47 @@ export async function* reviewCase(opts: {
       citations: [...cited.values()].filter((c) => used.has(c.id)),
       usage,
       spans,
+      checks,
       verdict,
       questionnaire,
     };
   };
 
   try {
+    // The briefing: the whole rejection letter (it's short, and what it does
+    // or doesn't say often decides the case), and for a review, the IRDAI
+    // rules that govern its stated reason. Retrieved before the first model
+    // call, so the regulator's text is on the table whether or not the model
+    // would have thought to look for it.
+    let briefing = "";
+    if (opts.letterId) {
+      const t = Date.now();
+      const letter = await listClauses(opts.userId, opts.letterId);
+      briefing += `THE REJECTION LETTER, IN FULL (cite as shown):\n${render(passages(letter, "policy"))}\n\n`;
+      const span = { stage: "read_letter", ms: Date.now() - t, note: `${letter.length} passages` };
+      spans.push(span);
+      yield { type: "stage", ...span };
+    }
+    if (opts.review) {
+      const t = Date.now();
+      const reason = ["reason", "clauses_cited"]
+        .map((f) => opts.facts?.letter.find((x) => x.field === f)?.value)
+        .filter(Boolean)
+        .join(" ");
+      const query = reason || opts.question;
+      const { clauses } = await searchRegulations(query);
+      const kept = await rerank(query, clauses, 3);
+      usage = addUsage(usage, kept.usage);
+      briefing += `IRDAI RULES THAT MAY GOVERN THIS REJECTION (cite as shown, only where they apply):\n${render(passages(kept.clauses, "regulation"))}\n\n`;
+      const span = { stage: "search_regulations", ms: Date.now() - t, note: query };
+      spans.push(span);
+      yield { type: "stage", ...span };
+    }
+    contents.push({
+      role: "user",
+      parts: [{ text: `${briefing}${factsBlock(opts.facts ?? { letter: [], policy: [] })}${opts.question}` }],
+    });
+
     for (let step = 0; step < MAX_STEPS; step++) {
       const t = Date.now();
       const res = await withRetry(() =>

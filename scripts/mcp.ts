@@ -109,6 +109,7 @@ server.registerTool(
       history: [],
       review: true,
       facts: { letter: termsOf("rejection"), policy: termsOf("policy") },
+      letterId: ready.find((d) => d.kind === "rejection")?.id,
     })) {
       if (event.type === "error") return text(event.message, true);
       if (event.type === "done") {

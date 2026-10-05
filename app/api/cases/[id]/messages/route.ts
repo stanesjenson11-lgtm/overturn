@@ -34,6 +34,7 @@ export const POST = route(async (req: Request, ctx: Ctx) => {
   const documentIds = ready.map((d) => d.id);
   const termsOf = (kind: string) => ready.find((d) => d.kind === kind)?.key_terms ?? [];
   const facts = { letter: termsOf("rejection"), policy: termsOf("policy") };
+  const letterId = ready.find((d) => d.kind === "rejection")?.id;
 
   const parsed = Body.safeParse(await req.json());
   if (!parsed.success) throw badRequest("Ask a question of at least a few words.");
@@ -64,7 +65,7 @@ export const POST = route(async (req: Request, ctx: Ctx) => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
 
       try {
-        for await (const event of reviewCase({ userId, documentIds, question, history, facts, review })) {
+        for await (const event of reviewCase({ userId, documentIds, question, history, facts, letterId, review })) {
           send(event);
 
           if (event.type === "done") {

@@ -188,6 +188,16 @@ export async function countChunks(userId: string, documentId: string) {
   return Number(r.n);
 }
 
+/** A short document read whole, as citable passages (the rejection letter). */
+export async function listClauses(userId: string, documentId: string) {
+  return tq<Retrieved>(
+    `SELECT id::text AS id, content, heading_path, page_start, page_end
+       FROM chunks WHERE user_id = $1 AND document_id = $2
+      ORDER BY ordinal`,
+    [userId, documentId],
+  );
+}
+
 /** A document's chunks in reading order, shaped as chunkPages() produced them. */
 export async function listChunks(userId: string, documentId: string) {
   return tq<Chunk>(

@@ -21,6 +21,7 @@ import { ingest } from "@/lib/ingest";
 import { extractKeyTerms } from "@/lib/ingest/terms";
 import { genAI, withRetry } from "@/lib/llm";
 import type { Citation } from "@/lib/rag/types";
+import type { RuleResult } from "@/lib/rules";
 import { rejectionLetter, renderPdf, SHIELD_POLICY, type LetterFields } from "./fixtures";
 
 /**
@@ -90,17 +91,24 @@ const JUDGE_MODEL = "gemma-4-31b-it";
 
 const Judgement = z.object({ grounded: z.boolean(), reason: z.string() });
 
-async function judge(answer: string, citations: Citation[]) {
+/**
+ * The judge sees exactly what the agent had: the passages it cited, what the
+ * policyholder said, and what the rule checks found. Without the last two,
+ * "79 months of continuous cover" reads as unsupported, and the score
+ * measures the judge's blindness instead of the agent.
+ */
+async function judge(answer: string, citations: Citation[], statement: string, checks: RuleResult[]) {
   const passages = citations
     .map((c) => `[${c.id}] ${c.document ?? "policyholder's documents"}, ${c.heading ?? "clause"}:\n${c.text}`)
     .join("\n\n");
+  const findings = checks.map((r) => `- ${r.rule}: ${r.finding}`).join("\n") || "(none run)";
   const res = await withRetry(() =>
     genAI().models.generateContent({
       model: JUDGE_MODEL,
-      contents: `Passages:\n${passages}\n\nAnswer:\n${answer}`,
+      contents: `Passages:\n${passages}\n\nThe policyholder said:\n${statement || "(nothing beyond asking for a review)"}\n\nRule-check findings (computed in code):\n${findings}\n\nAnswer:\n${answer}`,
       config: {
         systemInstruction:
-          "You audit an answer about a rejected health insurance claim against the passages it cites. Grounded means every factual claim is supported by the text of a passage it cites, or by facts the policyholder stated (dates, what they declared). An answer that adds general knowledge about insurance or law, however true, is NOT grounded.",
+          "You audit an answer about a rejected health insurance claim. Grounded means every factual claim is supported by a passage it cites, by what the policyholder said, or by a rule-check finding. An answer that adds general knowledge about insurance or law, however true, is NOT grounded. Reply with JSON only.",
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -113,7 +121,9 @@ async function judge(answer: string, citations: Citation[]) {
       },
     }),
   );
-  return Judgement.parse(JSON.parse(res.text ?? "")).grounded;
+  // Gemma sometimes adds a line after the JSON; read the object, not the reply.
+  const json = /\{[\s\S]*?\}/.exec(res.text ?? "")?.[0] ?? "";
+  return Judgement.parse(JSON.parse(json)).grounded;
 }
 
 // ------------------------------------------------------------------ run
@@ -148,6 +158,7 @@ for (const c of cases) {
       history: [],
       review: true,
       facts: { letter: letter.key_terms ?? [], policy: policy.key_terms ?? [] },
+      letterId: letter.id,
     }))
       if (event.type === "done") done = event;
     if (!done && attempt < UPSTREAM_TRIES) {
@@ -178,7 +189,7 @@ for (const c of cases) {
     steps: done.spans.length,
     ms: Date.now() - started,
   };
-  result.grounded = await judge(done.content, done.citations).catch((e) => {
+  result.grounded = await judge(done.content, done.citations, c.user, done.checks).catch((e) => {
     console.error(`  judge unreachable for ${c.id}:`, (e as Error).message.slice(0, 120));
     return null;
   });

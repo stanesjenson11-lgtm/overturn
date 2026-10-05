@@ -18,11 +18,18 @@ export const AGENT_MODEL = UTILITY_MODEL;
 
 /**
  * Reads scanned documents (rejection letters usually arrive as scans).
- * Chosen by `npm run scan-bench`, which transcribes the same synthetic scans
- * with each candidate and scores character error rate, latency and whether
- * the letter's facts survive. Provisional until that has run.
+ * Chosen by `npm run scan-bench` (2026-10-05) on four seeded scans:
+ *
+ *   gemini-3.1-flash-lite  CER 0.13%, median 12.8s a document, no failures
+ *   gemma-4-31b-it         CER 0.12%, median 53.6s, 1 of 4 failed (server 500)
+ *   gemma-4-26b-a4b-it     CER 12.4% on the one it finished; 3 of 4 timed out
+ *   gemini-3.7-flash       20 requests a day on the free tier: disqualified
+ *
+ * Gemma 4 31B reads as accurately but four times slower, and a 15-page scan
+ * has to finish inside one upload. ponytail: re-run the bench before
+ * switching; Gemma's free-API latency is the thing most likely to change.
  */
-export const SCAN_MODEL = ANSWER_MODEL;
+export const SCAN_MODEL = UTILITY_MODEL;
 
 let client: GoogleGenAI | undefined;
 

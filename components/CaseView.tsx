@@ -19,6 +19,7 @@ import UploadDropzone from "./UploadDropzone";
 /** The agent's tool calls, as the user watches them happen. */
 const STAGE_LABEL: Record<string, string> = {
   start: "reading the rejection",
+  read_letter: "reading the rejection letter",
   search_policy: "searching your documents",
   search_regulations: "checking IRDAI's rules",
   check_rules: "running the rule checks",
