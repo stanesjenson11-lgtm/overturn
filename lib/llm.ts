@@ -16,6 +16,14 @@ export const UTILITY_MODEL = "gemini-3.1-flash-lite";
  */
 export const AGENT_MODEL = UTILITY_MODEL;
 
+/**
+ * Reads scanned documents (rejection letters usually arrive as scans).
+ * Chosen by `npm run scan-bench`, which transcribes the same synthetic scans
+ * with each candidate and scores character error rate, latency and whether
+ * the letter's facts survive. Provisional until that has run.
+ */
+export const SCAN_MODEL = ANSWER_MODEL;
+
 let client: GoogleGenAI | undefined;
 
 export function genAI(): GoogleGenAI {

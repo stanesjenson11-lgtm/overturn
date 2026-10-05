@@ -1,22 +1,41 @@
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Type } from "@google/genai";
 import { z } from "zod";
 import "./env";
 import { required } from "./env";
-import { findUserByEmail, listChunks, listDocuments } from "@/lib/db/queries";
+import { reviewCase, type AgentEvent, type Verdict } from "@/lib/agent";
+import { hashPassword } from "@/lib/auth/password";
+import { applySchema } from "@/lib/db/migrate";
+import {
+  createCase,
+  createDocument,
+  createUser,
+  findUserByEmail,
+  listChunks,
+  listDocuments,
+  type Doc,
+} from "@/lib/db/queries";
+import { ingest } from "@/lib/ingest";
 import { extractKeyTerms } from "@/lib/ingest/terms";
-import { genAI, ANSWER_MODEL, withRetry } from "@/lib/llm";
-import { answerQuestion } from "@/lib/rag/pipeline";
+import { ANSWER_MODEL, genAI, withRetry } from "@/lib/llm";
 import type { Citation } from "@/lib/rag/types";
+import { rejectionLetter, renderPdf, SHIELD_POLICY, type LetterFields } from "./fixtures";
 
 /**
- * Turns "it seems to work" into four numbers.
+ * Turns "it seems to work" into numbers: every case in eval/cases.jsonl is a
+ * rejection letter reviewed against the same synthetic policy, with the
+ * verdict it should reach. The number that matters most is the false-hope
+ * rate: a tool that tells people a valid rejection is worth fighting costs
+ * them time and money and is worse than no tool.
  *
- * Run against the seeded demo account (`npm run seed` first). The free tier
- * allows 5 req/min on Flash, and every case spends an answer and a judge call
- * there, so a full run takes ten-plus minutes, not API dollars — that's the
- * point of running on Google AI Studio's free tier. Nightly, not per-push.
+ * Runs in its own account (eval@overturn.app), so the demo is never touched.
+ * Letters are cached by content hash: rerunning only re-runs the agent. The
+ * free tier makes a full run take several minutes, not money. Nightly, not
+ * per-push.
+ *
+ *   npm run eval
  */
 required("DATABASE_URL");
 required("GOOGLE_API_KEY");
@@ -25,209 +44,201 @@ required("GOOGLE_API_KEY");
 // and a 429 scored as a wrong answer would corrupt every number below.
 process.env.RETRY_429_MAX_S ??= "65";
 const UPSTREAM_TRIES = 3;
-
-const EMAIL = process.argv[2] ?? "demo@leaselens.app";
+const EMAIL = process.argv[2] ?? "eval@overturn.app";
+const REVIEW = "Review this rejection: does the reason the insurer gave hold up?";
 
 type Case = {
   id: string;
-  document: string;
-  question: string;
-  answerable: boolean;
-  evidence: string | null;
+  expected: Verdict["verdict"];
+  letter: LetterFields;
+  user: string;
 };
 
-/** A refusal is a specific shape, not a vibe — the answer prompt mandates it. */
-const REFUSED = /does not address|does not (say|cover|mention|specify)|is silent on/i;
-
-const Judgement = z.object({
-  grounded: z.boolean(),
-  reason: z.string(),
-});
-
-const JUDGEMENT_SCHEMA = {
-  type: Type.OBJECT,
-  properties: {
-    grounded: {
-      type: Type.BOOLEAN,
-      description: "every factual claim is supported by a cited clause",
-    },
-    reason: { type: Type.STRING, description: "one sentence" },
-  },
-  required: ["grounded", "reason"],
-};
-
-async function judge(question: string, answer: string, citations: Citation[]) {
-  const clauses = citations
-    .map((c) => `[${c.id}] ${c.heading ?? "clause"} (p.${c.pageStart})\n${c.text}`)
-    .join("\n\n");
-
-  const res = await withRetry(() => genAI().models.generateContent({
-    model: ANSWER_MODEL,
-    contents: `Question: ${question}\n\nClauses:\n${clauses}\n\nAnswer:\n${answer}`,
-    config: {
-      systemInstruction:
-        "You audit an answer against the clauses it was given. Grounded means every factual claim in the answer is supported by the text of a clause it cites. An answer that correctly declines because the clauses do not cover the question is grounded. An answer that adds general knowledge about leases or tenancy law is NOT grounded, however true that knowledge is.",
-      responseMimeType: "application/json",
-      responseSchema: JUDGEMENT_SCHEMA,
-    },
-  }));
-
-  try {
-    return Judgement.parse(JSON.parse(res.text ?? "")).grounded;
-  } catch {
-    return false;
-  }
-}
-
-// ---------------------------------------------------------------------------
-
-const user = await findUserByEmail(EMAIL);
-if (!user) throw new Error(`No seeded account for ${EMAIL}. Run: npm run seed`);
-
-const docs = await listDocuments(user.id);
-const byName = new Map(docs.map((d) => [d.filename.replace(/\.pdf$/, ""), d]));
-
-const cases: Case[] = readFileSync(path.join(process.cwd(), "eval/golden.jsonl"), "utf8")
+const cases: Case[] = readFileSync(path.join(process.cwd(), "eval/cases.jsonl"), "utf8")
   .split("\n")
   .filter((l) => l.trim())
   .map((l) => JSON.parse(l));
 
+// ------------------------------------------------------------------ setup
+
+await applySchema();
+const user =
+  (await findUserByEmail(EMAIL)) ??
+  (await createUser(EMAIL, await hashPassword(createHash("sha256").update(EMAIL).digest("hex"))));
+
+const hash = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 10);
+
+/** Ingests once per content: an unchanged letter is reused, an edited one re-read. */
+async function ensure(kind: "policy" | "rejection", name: string, text: string): Promise<Doc> {
+  const filename = `${name}-${hash(text)}.pdf`;
+  const existing = (await listDocuments(user.id)).find((d) => d.filename === filename && d.status === "ready");
+  if (existing) return existing;
+  const holder = await createCase(user.id, `eval: ${name}`);
+  const doc = await createDocument(user.id, holder.id, kind, filename);
+  await ingest(user.id, doc.id, kind, await renderPdf(text));
+  return (await listDocuments(user.id)).find((d) => d.id === doc.id)!;
+}
+
+const policy = await ensure("policy", "shield-policy", SHIELD_POLICY);
+
+// ------------------------------------------------------------------ judge
+
+const Judgement = z.object({ grounded: z.boolean(), reason: z.string() });
+
+async function judge(answer: string, citations: Citation[]) {
+  const passages = citations
+    .map((c) => `[${c.id}] ${c.document ?? "policyholder's documents"}, ${c.heading ?? "clause"}:\n${c.text}`)
+    .join("\n\n");
+  const res = await withRetry(() =>
+    genAI().models.generateContent({
+      model: ANSWER_MODEL,
+      contents: `Passages:\n${passages}\n\nAnswer:\n${answer}`,
+      config: {
+        systemInstruction:
+          "You audit an answer about a rejected health insurance claim against the passages it cites. Grounded means every factual claim is supported by the text of a passage it cites, or by facts the policyholder stated (dates, what they declared). An answer that adds general knowledge about insurance or law, however true, is NOT grounded.",
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            grounded: { type: Type.BOOLEAN },
+            reason: { type: Type.STRING, description: "one sentence" },
+          },
+          required: ["grounded", "reason"],
+        },
+      },
+    }),
+  );
+  return Judgement.parse(JSON.parse(res.text ?? "")).grounded;
+}
+
+// ------------------------------------------------------------------ run
+
 type Result = Case & {
-  answer: string;
+  got: Verdict["verdict"] | "asked" | "none";
+  content: string;
   citations: Citation[];
-  recalled: boolean;
-  refused: boolean;
-  citationsValid: boolean;
+  citesValid: boolean;
+  citesRegulation: boolean;
   grounded: boolean | null;
+  steps: number;
   ms: number;
 };
 
 const results: Result[] = [];
+// An outage scored as a wrong answer is a fake number. Any call that never
+// reached the model voids the run, and the last good results.md stays.
+let unreached = 0;
 
 for (const c of cases) {
-  const doc = byName.get(c.document);
-  if (!doc) throw new Error(`Document ${c.document} is not seeded for ${EMAIL}`);
-
+  const letter = await ensure("rejection", c.id, rejectionLetter(c.letter));
   const started = Date.now();
-  let answer = "";
-  let citations: Citation[] = [];
+  let done: Extract<AgentEvent, { type: "done" }> | undefined;
 
-  // A pipeline error here is the free tier's 503 "high demand" or an exhausted
-  // quota, not a wrong answer. Retry the case after a pause; only a case that
-  // keeps failing is scored as one.
-  for (let attempt = 1; attempt <= UPSTREAM_TRIES; attempt++) {
-    answer = "";
-    citations = [];
-    for await (const event of answerQuestion({
+  for (let attempt = 1; attempt <= UPSTREAM_TRIES && !done; attempt++) {
+    for await (const event of reviewCase({
       userId: user.id,
-      documentIds: [doc.id],
-      question: c.question,
+      documentIds: [policy.id, letter.id],
+      question: c.user ? `${REVIEW} ${c.user}` : REVIEW,
       history: [],
-    })) {
-      if (event.type === "citations") citations = event.citations;
-      if (event.type === "done") {
-        answer = event.content;
-        citations = event.citations;
-      }
-      if (event.type === "error") answer = `[pipeline error] ${event.message}`;
+      facts: { letter: letter.key_terms ?? [], policy: policy.key_terms ?? [] },
+    }))
+      if (event.type === "done") done = event;
+    if (!done && attempt < UPSTREAM_TRIES) {
+      console.log(`  upstream error on ${c.id}, retrying in 30s`);
+      await new Promise((r) => setTimeout(r, 30_000));
     }
-    if (!answer.startsWith("[pipeline error]") || attempt === UPSTREAM_TRIES) break;
-    console.log(`  upstream error on ${c.id}, retrying in 30s`);
-    await new Promise((r) => setTimeout(r, 30_000));
+  }
+  if (!done) {
+    unreached++;
+    console.error(`  ${c.id}: never reached the model`);
+    continue;
   }
 
-  const cited = [...answer.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1]));
+  const ids = new Set(done.citations.map((x) => x.id));
+  const written = [...done.content.matchAll(/\[([PR]\d+)\]/g)].map((m) => m[1]);
+  const got = done.verdict?.verdict ?? (done.questionnaire ? "asked" : "none");
+
   const result: Result = {
     ...c,
-    answer,
-    citations,
-    // Recall@5: did the clause that decides the answer survive to the prompt?
-    recalled: c.evidence ? citations.some((x) => x.text.includes(c.evidence!)) : false,
-    refused: REFUSED.test(answer),
-    // Every marker resolves to a clause that was actually supplied. A [7] with
-    // five clauses is a fabricated citation, which is worse than none.
-    citationsValid:
-      cited.every((n) => n >= 1 && n <= citations.length) && (!c.answerable || cited.length > 0),
+    got,
+    content: done.content,
+    citations: done.citations,
+    // Every [P3]/[R2] in the prose opens onto a passage, and a decided
+    // verdict cites something at all.
+    citesValid: written.every((id) => ids.has(id)) && (!done.verdict || written.length > 0),
+    citesRegulation: done.citations.some((x) => x.source === "regulation"),
     grounded: null,
+    steps: done.spans.length,
     ms: Date.now() - started,
   };
-
-  // A judge that still can't be reached after its retries scores the case
-  // ungrounded rather than throwing away every result gathered so far.
-  result.grounded = answer.startsWith("[pipeline error]")
-    ? false
-    : await judge(c.question, answer, citations).catch((e) => {
-        console.error(`  judge unreachable for ${c.id}:`, (e as Error).message.slice(0, 120));
-        return false;
-      });
-
+  result.grounded = await judge(done.content, done.citations).catch((e) => {
+    console.error(`  judge unreachable for ${c.id}:`, (e as Error).message.slice(0, 120));
+    unreached++;
+    return null;
+  });
   results.push(result);
-  console.log(
-    `${result.recalled || !c.answerable ? "." : "R"}${result.refused === !c.answerable ? "." : "F"}${result.grounded ? "." : "G"} ${c.id}`,
-  );
+
+  const ok = got === c.expected || (c.expected === "needs_info" && got === "asked");
+  console.log(`${ok ? "." : "X"} ${c.id}: expected ${c.expected}, got ${got}`);
 }
 
-// ---------------------------------------------------------------------------
-// Key terms, extracted fresh from the stored chunks: this measures the current
-// prompt and grounding guard, not whatever was saved at upload time. A null
-// expectation means the lease is silent and the field must NOT come back.
+if (unreached) {
+  console.error(`\n${unreached} call(s) never reached the model; eval/results.md left untouched.`);
+  process.exit(1);
+}
+
+// ------------------------------------------------------------------ key terms
+// Extracted fresh from stored chunks: this measures the current prompt and
+// grounding guard, not whatever was saved at upload time.
 
 const expectedTerms: Record<string, Record<string, string | null>> = JSON.parse(
   readFileSync(path.join(process.cwd(), "eval/key-terms.json"), "utf8"),
 );
+const termDocs = {
+  "shield-policy": policy,
+  "shield-rejection": await ensure("rejection", cases[0].id, rejectionLetter(cases[0].letter)),
+};
 const termMisses: string[] = [];
 let termHits = 0;
 let termTotal = 0;
-
 for (const [name, fields] of Object.entries(expectedTerms)) {
-  const doc = byName.get(name);
-  if (!doc) throw new Error(`Document ${name} is not seeded for ${EMAIL}`);
+  const doc = termDocs[name as keyof typeof termDocs];
   const chunks = await listChunks(user.id, doc.id);
-  const terms = await extractKeyTerms(doc.kind, chunks).then(
-    (r) => r.terms,
-    (e) => (console.error(`  key terms failed for ${name}:`, (e as Error).message.slice(0, 120)), []),
-  );
-
+  const { terms } = await extractKeyTerms(doc.kind, chunks);
   for (const [field, want] of Object.entries(fields)) {
     termTotal++;
     const got = terms.find((t) => t.field === field);
-    const w = want?.toLowerCase() ?? "";
-    // Right value AND a page where that text really is.
-    const ok =
-      want === null
-        ? !got
-        : !!got &&
-          got.value.toLowerCase().includes(w) &&
-          chunks.some((c) => c.pageStart === got.page && c.content.toLowerCase().includes(w));
+    const ok = want === null ? !got : !!got && got.value.toLowerCase().includes(want.toLowerCase());
     if (ok) termHits++;
-    else
-      termMisses.push(
-        `- \`${name}.${field}\`: expected ${want === null ? "nothing" : `"${want}"`}, got ${got ? `"${got.value}" (p.${got.page})` : "nothing"}`,
-      );
+    else termMisses.push(`- \`${name}.${field}\`: expected ${want === null ? "nothing" : `"${want}"`}, got ${got ? `"${got.value}"` : "nothing"}`);
   }
 }
 
-// ---------------------------------------------------------------------------
+// ------------------------------------------------------------------ report
 
-const answerable = results.filter((r) => r.answerable);
-const unanswerable = results.filter((r) => !r.answerable);
 const pct = (n: number, d: number) => (d ? `${Math.round((n / d) * 100)}%` : "n/a");
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] ?? 0;
+const correct = (r: Result) => r.got === r.expected || (r.expected === "needs_info" && r.got === "asked");
+
+const valid = results.filter((r) => r.expected === "valid");
+const challengeable = results.filter((r) => r.expected === "challengeable");
+const decidedChallengeable = results.filter((r) => r.got === "challengeable");
 
 const rows = [
-  ["Recall@5", pct(answerable.filter((r) => r.recalled).length, answerable.length), `${answerable.length} answerable questions`],
-  ["Refusal accuracy", pct(unanswerable.filter((r) => r.refused).length, unanswerable.length), `${unanswerable.length} questions the leases do not cover`],
-  ["False refusals", pct(answerable.filter((r) => r.refused).length, answerable.length), "answerable questions wrongly declined"],
-  ["Citation validity", pct(results.filter((r) => r.citationsValid).length, results.length), "every [n] resolves to a supplied clause"],
+  ["Verdict accuracy", pct(results.filter(correct).length, results.length), `${results.length} rejection letters`],
+  ["False-hope rate", pct(valid.filter((r) => r.got === "challengeable").length, valid.length), `valid rejections called challengeable (of ${valid.length})`],
+  ["Missed-rights rate", pct(challengeable.filter((r) => r.got === "valid").length, challengeable.length), `challengeable rejections called valid (of ${challengeable.length})`],
+  ["Citation validity", pct(results.filter((r) => r.citesValid).length, results.length), "every [P]/[R] opens onto a passage it was given"],
+  ["Cites the regulator", pct(decidedChallengeable.filter((r) => r.citesRegulation).length, decidedChallengeable.length), "challengeable verdicts backed by an IRDAI passage"],
   ["Groundedness", pct(results.filter((r) => r.grounded).length, results.length), `LLM-as-judge, ${ANSWER_MODEL}`],
-  ["Median latency", `${(median(results.map((r) => r.ms)) / 1000).toFixed(1)}s`, "rewrite → retrieve → rerank → grade → answer"],
-  ["Key-terms accuracy", pct(termHits, termTotal), `${termTotal} fields, incl. ${Object.values(expectedTerms).flatMap(Object.values).filter((v) => v === null).length} the leases are silent on`],
+  ["Key-terms accuracy", pct(termHits, termTotal), `${termTotal} fields from the policy and a letter`],
+  ["Median review", `${(median(results.map((r) => r.ms)) / 1000).toFixed(1)}s, ${median(results.map((r) => r.steps))} steps`, "agent wall clock and tool calls"],
 ];
 
 const report = `# Evaluation
 
 Generated ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC · \`npm run eval\`
-${cases.length} questions across ${byName.size} synthetic leases.
+${results.length} synthetic rejection letters, each reviewed against the same synthetic policy.
 
 | Metric | Score | Notes |
 | --- | --- | --- |
@@ -235,21 +246,18 @@ ${rows.map(([k, v, n]) => `| ${k} | **${v}** | ${n} |`).join("\n")}
 
 ## Every case
 
-| # | Question | Expected | Refused | Recall | Grounded |
-| --- | --- | --- | --- | --- | --- |
+| Case | Expected | Got | Cites regulator | Grounded |
+| --- | --- | --- | --- | --- |
 ${results
-  .map(
-    (r) =>
-      `| \`${r.id}\` | ${r.question} | ${r.answerable ? "answer" : "decline"} | ${r.refused ? "yes" : "no"} | ${r.answerable ? (r.recalled ? "hit" : "miss") : "—"} | ${r.grounded ? "yes" : "no"} |`,
-  )
+  .map((r) => `| \`${r.id}\` | ${r.expected} | ${correct(r) ? r.got : `**${r.got}**`} | ${r.citesRegulation ? "yes" : "no"} | ${r.grounded ? "yes" : "no"} |`)
   .join("\n")}
 
-## Failures worth reading
+## Wrong verdicts, in full
 
 ${
   results
-    .filter((r) => (r.answerable ? !r.recalled || r.refused || !r.grounded : !r.refused))
-    .map((r) => `### \`${r.id}\`\n\n**${r.question}**\n\n> ${r.answer.replace(/\n+/g, "\n> ")}`)
+    .filter((r) => !correct(r))
+    .map((r) => `### \`${r.id}\`: expected ${r.expected}, got ${r.got}\n\n> ${r.content.replace(/\n+/g, "\n> ")}`)
     .join("\n\n") || "_None._"
 }
 
@@ -260,3 +268,4 @@ ${termMisses.join("\n") || "_None._"}
 
 writeFileSync(path.join(process.cwd(), "eval/results.md"), report);
 console.log(`\n${rows.map(([k, v]) => `${k.padEnd(20)} ${v}`).join("\n")}\n\neval/results.md written`);
+process.exit(0);

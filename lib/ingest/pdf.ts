@@ -1,7 +1,7 @@
 import { Type, type Schema } from "@google/genai";
 import { extractText } from "unpdf";
 import { badRequest } from "../http";
-import { ANSWER_MODEL, genAI, withRetry, type Usage } from "../llm";
+import { genAI, SCAN_MODEL, withRetry, type Usage } from "../llm";
 
 export type Page = { number: number; text: string };
 
@@ -49,6 +49,7 @@ const tooThin = (pages: Page[]) =>
 export async function extractPages(
   bytes: Uint8Array,
   onUsage: (u: Usage) => void = () => {},
+  scanModel: string = SCAN_MODEL,
 ): Promise<Page[]> {
   let totalPages: number;
   let text: string[];
@@ -75,7 +76,7 @@ export async function extractPages(
       `That looks like a ${totalPages}-page scan; scans are limited to ${MAX_SCANNED_PAGES} pages. ` +
         "Split it, or upload a PDF with selectable text.",
     );
-  const scanned = await transcribePages(bytes, totalPages, onUsage);
+  const scanned = await transcribePages(bytes, totalPages, onUsage, scanModel);
   if (tooThin(scanned)) throw badRequest(SCAN_ERROR);
   return scanned;
 }
@@ -103,13 +104,14 @@ Keep clause numbers, headings and line breaks. Do not summarise, correct, transl
 async function transcribePages(
   bytes: Uint8Array,
   totalPages: number,
-  onUsage: (u: Usage) => void = () => {},
+  onUsage: (u: Usage) => void,
+  model: string,
 ): Promise<Page[]> {
   let res;
   try {
     res = await withRetry(() =>
       genAI().models.generateContent({
-        model: ANSWER_MODEL,
+        model,
         contents: [
           {
             role: "user",

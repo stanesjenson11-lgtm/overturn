@@ -147,32 +147,50 @@ Synthetic document for testing. Not a real insurance product.
 7. GRIEVANCES
 7.1 A grievance may be sent to the Grievance Redressal Officer at grievance@shieldhealth.example. If it is not resolved, the policyholder may approach the Insurance Ombudsman.`;
 
-/**
- * A rejection the moratorium should overturn: non-disclosure raised against a
- * policy that (per the schedule the user is asked for) began in March 2019,
- * 79 months before this admission.
- */
-export const SHIELD_REJECTION = `SHIELD HEALTH INSURANCE LTD
+/** The variable part of a rejection letter: what eval/cases.jsonl stores per case. */
+export type LetterFields = {
+  claim: string;
+  policy: string;
+  date: string; // DD/MM/YYYY, as the insurer writes it
+  admission: string; // YYYY-MM-DD
+  amount: string;
+  body: string;
+};
+
+/** A rejection letter laid out the way Indian insurers send them. */
+export const rejectionLetter = (l: LetterFields) => `SHIELD HEALTH INSURANCE LTD
 CLAIM REPUDIATION LETTER
 Synthetic document for testing.
 
-Date: 14/11/2025
-Claim Number: SH/CLM/2025/004512
-Policy Number: SH/IND/2019/118230
-Date of Admission: 02/10/2025
+Date: ${l.date}
+Claim Number: SH/CLM/${l.date.slice(-4)}/${l.claim}
+Policy Number: ${l.policy}
+Date of Admission: ${l.admission.split("-").reverse().join("/")}
 Hospital: City Care Hospital, Pune
-Amount Claimed: Rs. 2,85,000
+Amount Claimed: Rs. ${l.amount}
 Amount Payable: Nil
 
 Dear Policyholder,
 
-We have reviewed the above claim for treatment of coronary artery disease. Our review of the medical records shows that the insured person was diagnosed with hypertension in 2017, before the policy began, and this was not disclosed in the proposal form.
-
-The claim is therefore repudiated under Clause 3.2 (Pre-existing diseases) of the policy wording, for non-disclosure of a material fact.
+${l.body}
 
 If you are not satisfied with this decision, you may write to our Grievance Redressal Officer.
 
 Claims Department`;
+
+/**
+ * The demo case, and the eval's first: non-disclosure raised against a policy
+ * that (per the start date the user is asked for) began in March 2019, 79
+ * months before this admission, so the moratorium should overturn it.
+ */
+export const SHIELD_REJECTION = rejectionLetter({
+  claim: "004512",
+  policy: "SH/IND/2019/118230",
+  date: "14/11/2025",
+  admission: "2025-10-02",
+  amount: "2,85,000",
+  body: "We have reviewed the above claim for treatment of coronary artery disease. Our review of the medical records shows that the insured person was diagnosed with hypertension in 2017, before the policy began, and this was not disclosed in the proposal form.\n\nThe claim is therefore repudiated under Clause 3.2 (Pre-existing diseases) of the policy wording, for non-disclosure of a material fact.",
+});
 
 const FIXTURES = {
   "shield-policy": SHIELD_POLICY,
@@ -203,4 +221,46 @@ export async function writeFixtures(dir: string): Promise<Record<FixtureName, st
 if (import.meta.url === pathToFileURL(process.argv[1]!).href) {
   const written = await writeFixtures(path.join(process.cwd(), "eval/fixtures"));
   console.log(Object.values(written).join("\n"));
+}
+
+/**
+ * The same document as a scan: each page rasterised, tilted a little, speckled
+ * and saved as a JPEG inside an image-only PDF, so there is no text layer and
+ * ingest takes the transcription path. Seeded, so a benchmark rerun reads the
+ * identical scan. Uses @napi-rs/canvas, a dev dependency: only tests and
+ * benchmarks make scans; production only reads them.
+ */
+export async function renderScan(text: string, seed = 1): Promise<Uint8Array> {
+  const { createCanvas, loadImage } = await import("@napi-rs/canvas");
+  const { renderPageAsImage, getDocumentProxy } = await import("unpdf");
+  const { PDFDocument } = await import("pdf-lib");
+
+  let s = seed;
+  const rand = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+
+  const clean = await renderPdf(text);
+  const pages = (await getDocumentProxy(new Uint8Array(clean))).numPages;
+  const scan = await PDFDocument.create();
+
+  for (let n = 1; n <= pages; n++) {
+    const png = await renderPageAsImage(new Uint8Array(clean), n, {
+      canvasImport: () => import("@napi-rs/canvas"),
+      scale: 1.6,
+    });
+    const img = await loadImage(Buffer.from(png));
+    const canvas = createCanvas(img.width, img.height);
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#f4f1ea"; // paper, not screen white
+    ctx.fillRect(0, 0, img.width, img.height);
+    ctx.translate(img.width / 2, img.height / 2);
+    ctx.rotate(((rand() - 0.5) * 1.6 * Math.PI) / 180); // within +/-0.8 degrees
+    ctx.drawImage(img, -img.width / 2, -img.height / 2);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = "rgba(40, 40, 40, 0.35)";
+    for (let i = 0; i < 1800; i++) ctx.fillRect(rand() * img.width, rand() * img.height, 1.2, 1.2);
+
+    const jpg = await scan.embedJpg(canvas.toBuffer("image/jpeg", 70));
+    scan.addPage([595, 842]).drawImage(jpg, { x: 0, y: 0, width: 595, height: 842 });
+  }
+  return scan.save();
 }

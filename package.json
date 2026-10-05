@@ -12,9 +12,9 @@
     "migrate": "tsx scripts/migrate.ts",
     "seed": "tsx scripts/seed.ts",
     "eval": "tsx scripts/evaluate.ts",
-    "calibrate": "tsx scripts/calibrate.ts",
     "mcp": "tsx scripts/mcp.ts",
-    "ingest-regulations": "tsx scripts/ingest-regulations.ts"
+    "ingest-regulations": "tsx scripts/ingest-regulations.ts",
+    "scan-bench": "tsx scripts/scan-bench.ts"
   },
   "dependencies": {
     "@google/genai": "^2.18.0",
@@ -30,6 +30,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.3.0",
+    "@napi-rs/canvas": "^1.0.10",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",

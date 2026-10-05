@@ -2,105 +2,76 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { chunkPages } from "@/lib/ingest/chunk";
 import { extractPages } from "@/lib/ingest/pdf";
 import { termFields } from "@/lib/ingest/terms";
-import { GARDEN_FLAT, MAPLE_COURT, SHIELD_POLICY, SHIELD_REJECTION, renderPdf } from "@/scripts/fixtures";
+import { RULES } from "@/lib/rules";
+import {
+  rejectionLetter,
+  renderPdf,
+  SHIELD_POLICY,
+  SHIELD_REJECTION,
+  type LetterFields,
+} from "@/scripts/fixtures";
 
 /**
- * The eval harness costs real money to run and needs live API keys, so its
- * ground truth is never checked by CI — which makes a typo in golden.jsonl a
- * permanent, invisible false negative: Recall@5 reports a miss forever and the
- * retrieval looks worse than it is.
- *
- * This test needs no keys. It only asks: does the evidence phrase exist in the
- * document at all?
+ * The eval needs live API keys, so CI never runs it — which makes a mistake in
+ * its ground truth a permanent, invisible error: a mislabelled case scores the
+ * agent wrong forever. This test needs no keys. It checks the cases themselves:
+ * well formed, renderable, and, wherever a rule check decides the outcome,
+ * labelled the way the rules engine says.
  */
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 type Case = {
   id: string;
-  document: string;
-  question: string;
-  answerable: boolean;
-  evidence: string | null;
+  expected: "challengeable" | "valid" | "needs_info";
+  letter: LetterFields;
+  user: string;
+  rule?: { name: keyof typeof RULES; facts: Record<string, unknown>; holds: boolean | null };
 };
 
-const cases: Case[] = readFileSync(path.join(root, "eval/golden.jsonl"), "utf8")
+const cases: Case[] = readFileSync(path.join(root, "eval/cases.jsonl"), "utf8")
   .split("\n")
   .filter((l) => l.trim())
   .map((l) => JSON.parse(l));
 
-describe("the golden set", () => {
-  it("is well formed", () => {
-    expect(cases.length).toBeGreaterThanOrEqual(20);
+describe("the eval cases", () => {
+  it("are well formed, with enough of each verdict to measure", () => {
+    expect(cases.length).toBeGreaterThanOrEqual(16);
     expect(new Set(cases.map((c) => c.id)).size).toBe(cases.length);
-    // Refusal accuracy over three questions is noise, not a metric.
-    expect(cases.filter((c) => !c.answerable).length).toBeGreaterThanOrEqual(5);
+    // The false-hope rate is a fraction of the valid rejections: three cases
+    // would make it noise, not a number.
+    expect(cases.filter((c) => c.expected === "valid").length).toBeGreaterThanOrEqual(5);
+    expect(cases.filter((c) => c.expected === "challengeable").length).toBeGreaterThanOrEqual(5);
     for (const c of cases) {
-      expect(c.question.length).toBeGreaterThan(10);
-      // An answerable case with no evidence phrase would silently score zero
-      // recall; an unanswerable one with evidence contradicts itself.
-      expect(Boolean(c.evidence)).toBe(c.answerable);
+      expect(["challengeable", "valid", "needs_info"]).toContain(c.expected);
+      expect(c.letter.admission, c.id).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(c.letter.date, c.id).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
     }
   });
 
-  it("names only documents the fixtures actually produce", () => {
-    for (const c of cases) expect(["maple-court", "garden-flat"]).toContain(c.document);
-  });
-
-  it("quotes evidence that exists in the ingested text", async () => {
-    const corpus: Record<string, string> = {};
-    for (const [name, text] of [
-      ["maple-court", MAPLE_COURT],
-      ["garden-flat", GARDEN_FLAT],
-    ] as const) {
-      const chunks = chunkPages(await extractPages(await renderPdf(text)));
-      corpus[name] = chunks.map((c) => c.content).join("\n");
-    }
-
+  it("render to PDFs that read back, so ingest sees what the case means", async () => {
     for (const c of cases) {
-      if (!c.evidence) continue;
-      expect(corpus[c.document], `${c.id}: "${c.evidence}"`).toContain(c.evidence);
+      const pages = await extractPages(await renderPdf(rejectionLetter(c.letter)));
+      expect(pages.map((p) => p.text).join(" "), c.id).toContain(c.letter.claim);
     }
   });
 
-  it("keeps the unanswerable questions genuinely unanswerable", async () => {
-    // The refusal metric is the headline number. If a topic we call "not
-    // covered" is in fact covered, the model is right to answer and the metric
-    // punishes it for being right.
-    const forbidden: Record<string, RegExp> = {
-      python: /python|reptile|snake/i,
-      // Not /smok/: clause 10.3 makes the tenant replace "smoke detector
-      // batteries", and that near-miss is the point. Dense retrieval will
-      // surface it, and the answer still has to decline.
-      smoking: /smoking|smoke[- ]free/i,
-      parking: /parking/i,
-      "renters-insurance": /insurance/i,
-      "flat-pets": /\bpet\b|\bcat\b|\bdog\b/i,
-      "flat-parking": /parking/i,
-      // Off-topic entirely: what the off-topic gate exists to catch cheaply.
-      "off-topic-capital": /france|paris/i,
-      "off-topic-recipe": /biryani|recipe/i,
-      "off-topic-code": /python|function/i,
-    };
-
-    for (const [name, text] of [
-      ["maple-court", MAPLE_COURT],
-      ["garden-flat", GARDEN_FLAT],
-    ] as const) {
-      for (const c of cases.filter((x) => !x.answerable && x.document === name)) {
-        const pattern = forbidden[c.id];
-        expect(pattern, `no forbidden-topic pattern declared for ${c.id}`).toBeDefined();
-        expect(text, `${c.id} is supposed to be absent from ${name}`).not.toMatch(pattern);
-      }
+  it("agree with the rules engine wherever a rule decides them", () => {
+    for (const c of cases.filter((x) => x.rule)) {
+      const result = (RULES[c.rule!.name] as (f: object) => { holds: boolean | null })(c.rule!.facts);
+      expect(result.holds, c.id).toBe(c.rule!.holds);
     }
+  });
+
+  it("start with the demo letter, so the demo is a scored case", () => {
+    expect(rejectionLetter(cases[0].letter)).toBe(SHIELD_REJECTION);
   });
 });
 
 describe("the key-terms expectations", () => {
-  // Same reasoning as the golden set: a typo here is a permanent false miss
-  // that no CI run would ever surface.
+  // Same reasoning: a typo here is a permanent false miss that no CI run would
+  // ever surface.
   const expected: Record<string, Record<string, string | null>> = JSON.parse(
     readFileSync(path.join(root, "eval/key-terms.json"), "utf8"),
   );

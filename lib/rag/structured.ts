@@ -6,7 +6,7 @@ import { genAI, UTILITY_MODEL, withRetry, type Usage } from "../llm";
  *
  * Gemini's `responseSchema` is a constrained OpenAPI-style subset (uppercase
  * `Type` enum, no `$ref`/`allOf`/`additionalProperties`) — a general translator
- * emits constructs it doesn't accept. Both schemas here are two or three
+ * emits constructs it doesn't accept. The schemas in this app are a few
  * fields; writing them by hand is less code than a translation layer and
  * nothing to keep in sync with a schema library's output format.
  */
@@ -30,19 +30,6 @@ export const SCORES_SCHEMA: Schema = {
 
 export type Scores = { scores: { index: number; score: number }[] };
 
-export const GRADE_SCHEMA: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    sufficient: { type: Type.BOOLEAN, description: "true if these clauses contain the answer" },
-    search_for: {
-      type: Type.STRING,
-      description: "if not sufficient, a phrase to search the lease for instead; else empty",
-    },
-  },
-  required: ["sufficient", "search_for"],
-};
-
-export type Grade = { sufficient: boolean; search_for: string };
 
 const toUsage = (u?: { promptTokenCount?: number; candidatesTokenCount?: number }): Usage => ({
   in: u?.promptTokenCount ?? 0,

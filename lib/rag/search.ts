@@ -55,21 +55,3 @@ export async function searchRegulations(
   ]);
   return { clauses: rrf([dense, keyword], limit), topScore: Number(dense[0]?.score ?? 0) };
 }
-
-/**
- * Below this top-1 cosine the question isn't about the lease at all ("what's
- * the capital of France?"), and the pipeline declines without spending the
- * rerank, grade and answer calls on it.
- *
- * Calibrated with `npm run calibrate` on 2026-10-05 (gemini-embedding-001 at
- * 768 dims, the two seeded leases): every golden lease question scored
- * 0.596–0.756 at top-1, answerable or not, with "can I keep a python?" lowest;
- * off-topic questions topped out at 0.503. 0.55 sits mid-gap (0.093). Lease
- * questions the lease doesn't cover stay above it on purpose: declining those
- * well needs the nearby clauses in hand, which only the full pipeline has.
- *
- * ponytail: one global constant from two synthetic leases. Re-run calibrate
- * after changing the embedding model; calibrate per document if real uploads
- * start tripping it.
- */
-export const OFF_TOPIC_THRESHOLD = 0.55;

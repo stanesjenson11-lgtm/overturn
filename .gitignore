@@ -26,3 +26,4 @@ Thumbs.db
 
 # Public regulation PDFs: downloaded by scripts/ingest-regulations.ts, not committed
 corpus/
+eval/scan-results.md

@@ -22,16 +22,3 @@ export type Citation = {
 };
 
 export type Span = { stage: string; ms: number; note?: string };
-
-/** ponytail: the fixed pipeline's positional ids; goes when that pipeline does (Phase 8). */
-export const toCitations = (clauses: Clause[]): Citation[] =>
-  clauses.map((c, i) => ({
-    id: String(i + 1),
-    source: "policy",
-    document: null,
-    chunkId: c.id,
-    heading: c.heading_path,
-    pageStart: c.page_start,
-    pageEnd: c.page_end,
-    text: c.content,
-  }));
