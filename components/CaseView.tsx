@@ -14,7 +14,7 @@ import {
 } from "@/lib/client";
 import { AnswerText } from "./CitationChip";
 import { DeleteButton, REFRESH } from "./Sidebar";
-import UploadDropzone from "./UploadDropzone";
+import UploadDropzone, { ACCEPT, PlusIcon, uploadDocument } from "./UploadDropzone";
 
 /** The agent's tool calls, as the user watches them happen. */
 const STAGE_LABEL: Record<string, string> = {
@@ -126,15 +126,107 @@ const STATUS: Record<string, string> = {
 };
 
 const SLOTS: { kind: DocKind; label: string; prompt: string; optional?: boolean }[] = [
-  { kind: "policy", label: "Policy wording", prompt: "Drop the policy wording PDF" },
-  { kind: "rejection", label: "Rejection letter", prompt: "Drop the rejection letter (a scan is fine)" },
+  { kind: "policy", label: "Policy wording", prompt: "Add the policy wording" },
+  { kind: "rejection", label: "Rejection letter", prompt: "Add the rejection letter" },
   {
     kind: "medical",
     label: "Discharge summary",
-    prompt: "Optional: discharge summary",
+    prompt: "Add a discharge summary (optional)",
     optional: true,
   },
 ];
+
+/**
+ * The "+" beside the message box: add a document the case doesn't have yet,
+ * as a PDF or a photo, without scrolling back up to the slots. It offers only
+ * the kinds still missing, because a case holds one of each.
+ */
+function AttachMenu({
+  caseId,
+  missing,
+  onUploaded,
+  onError,
+}: {
+  caseId: string;
+  missing: typeof SLOTS;
+  onUploaded: () => void;
+  onError: (message: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  // A ref, not state: the file picker's change event must see the kind chosen
+  // a moment earlier, whatever has or hasn't re-rendered in between.
+  const kind = useRef<DocKind | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+
+  async function pick(file: File | undefined) {
+    if (!file || !kind.current) return;
+    setBusy(true);
+    try {
+      await uploadDocument(caseId, kind.current, file);
+      onUploaded();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Upload failed.");
+    } finally {
+      setBusy(false);
+      kind.current = null;
+      if (input.current) input.current.value = ""; // the same file can be picked again
+    }
+  }
+
+  return (
+    <div
+      className="relative"
+      onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
+      }}
+    >
+      <button
+        type="button"
+        aria-label="Add a document"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={busy || !missing.length}
+        title={missing.length ? "Add a PDF or a photo" : "All three documents are added"}
+        onClick={() => setOpen((o) => !o)}
+        className="flex size-11 shrink-0 items-center justify-center rounded-full text-accent shadow-neu-sm transition hover:shadow-neu active:shadow-neu-inset-sm disabled:opacity-40"
+      >
+        {busy ? <span className="size-2 animate-pulse rounded-full bg-accent" /> : <PlusIcon />}
+      </button>
+
+      {open && (
+        <ul role="menu" className="absolute bottom-full left-0 z-20 mb-2 w-64 rounded-2xl bg-paper p-2 shadow-neu">
+          {missing.map((s) => (
+            <li key={s.kind} role="none">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  kind.current = s.kind;
+                  setOpen(false);
+                  input.current?.click();
+                }}
+                className="w-full rounded-xl px-3 py-2 text-left text-sm transition hover:shadow-neu-sm"
+              >
+                {s.label}
+                <span className="block text-xs text-muted">PDF or photo</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <input
+        ref={input}
+        type="file"
+        accept={ACCEPT}
+        className="hidden"
+        onChange={(e) => void pick(e.target.files?.[0])}
+      />
+    </div>
+  );
+}
 
 /** One question the documents may well not answer, so declining gets
  *  discovered by anyone who clicks around, not only by someone who knows to look. */
@@ -418,6 +510,12 @@ export default function CaseView({ caseId }: { caseId: string }) {
         className="border-t border-line"
       >
         <div className="mx-auto flex max-w-3xl items-center gap-3 px-6 py-4">
+          <AttachMenu
+            caseId={caseId}
+            missing={SLOTS.filter((s) => !docs.some((d) => d.kind === s.kind))}
+            onUploaded={load}
+            onError={setError}
+          />
           <input
             value={question}
             onChange={(e) => setQuestion(e.target.value)}

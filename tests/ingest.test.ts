@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { PDFDocument } from "pdf-lib";
 import { chunkPages } from "@/lib/ingest/chunk";
-import { MAX_SCANNED_PAGES, extractPages, validateUpload } from "@/lib/ingest/pdf";
+import { MAX_SCANNED_PAGES, extractPages, toPdf } from "@/lib/ingest/pdf";
 import { setGenAI } from "@/lib/llm";
 import { MAPLE_COURT, renderPdf } from "@/scripts/fixtures";
 
@@ -15,18 +15,37 @@ beforeAll(async () => {
   pdf = await renderPdf(MAPLE_COURT);
 });
 
-describe("upload validation", () => {
-  it("checks magic bytes, not the file extension", () => {
-    const notAPdf = new TextEncoder().encode("GIF89a and some bytes");
-    expect(() => validateUpload(notAPdf, "lease.pdf")).toThrow(/isn't a PDF/);
+describe("what an upload may be", () => {
+  /** A photo of a letter, as a phone would send it after the browser shrinks it. */
+  const photo = async (type: "image/jpeg" | "image/png") => {
+    const { createCanvas } = await import("@napi-rs/canvas");
+    const canvas = createCanvas(800, 1100);
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, 800, 1100);
+    return new Uint8Array(type === "image/jpeg" ? canvas.toBuffer("image/jpeg", 80) : canvas.toBuffer("image/png"));
+  };
+
+  it("passes a real PDF through untouched", async () => {
+    expect(await toPdf(pdf)).toBe(pdf);
   });
 
-  it("rejects a non-pdf name outright", () => {
-    expect(() => validateUpload(pdf, "lease.docx")).toThrow(/Only PDF/);
+  it("turns a JPEG or PNG photo into a one-page PDF with no text layer", async () => {
+    for (const type of ["image/jpeg", "image/png"] as const) {
+      const wrapped = await toPdf(await photo(type));
+      expect(new TextDecoder().decode(wrapped.slice(0, 5))).toBe("%PDF-");
+      const doc = await PDFDocument.load(wrapped);
+      expect(doc.getPageCount()).toBe(1);
+      // Its proportions survive: 800x1100 at A4's width is 595x818.
+      expect(doc.getPage(0).getSize()).toEqual({ width: 595, height: 818 });
+    }
   });
 
-  it("accepts a real PDF", () => {
-    expect(() => validateUpload(pdf, "lease.pdf")).not.toThrow();
+  it("decides by the bytes, not by what the file claims to be", async () => {
+    const gif = new TextEncoder().encode("GIF89a and some bytes");
+    await expect(toPdf(gif)).rejects.toThrow(/PDF, or a photo/);
+    // Claims to be a JPEG (right magic bytes), isn't one.
+    await expect(toPdf(new Uint8Array([0xff, 0xd8, 0xff, 0x00, 1, 2, 3]))).rejects.toThrow(/couldn't be read/);
   });
 });
 

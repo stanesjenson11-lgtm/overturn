@@ -10,7 +10,7 @@ import {
   type DocKind,
 } from "@/lib/db/queries";
 import { ingest } from "@/lib/ingest";
-import { MAX_DOCS_PER_USER, validateUpload } from "@/lib/ingest/pdf";
+import { MAX_DOCS_PER_USER, toPdf } from "@/lib/ingest/pdf";
 import { badRequest, json, notFound, route } from "@/lib/http";
 import { assertWithinDailyLimit } from "@/lib/limits";
 
@@ -57,8 +57,9 @@ export const POST = route(async (req: Request) => {
   if ((await listCaseDocuments(userId, caseId)).some((d) => d.kind === kind))
     throw badRequest(`This case already has a ${KIND_LABEL[kind as DocKind]}. Delete it to upload another.`);
 
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  validateUpload(bytes, file.name); // magic bytes and size, before parsing anything
+  // A PDF, or a photo wrapped into one; size and magic bytes are checked
+  // before anything is parsed.
+  const bytes = await toPdf(new Uint8Array(await file.arrayBuffer()));
 
   const doc = await createDocument(userId, caseId, kind as DocKind, file.name);
 

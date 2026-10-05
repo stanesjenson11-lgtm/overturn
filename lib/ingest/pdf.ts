@@ -1,3 +1,4 @@
+import { PDFDocument } from "pdf-lib";
 import { Type, type Schema } from "@google/genai";
 import { extractText } from "unpdf";
 import { badRequest } from "../http";
@@ -28,18 +29,41 @@ const SCAN_ERROR =
   "This PDF has no selectable text and the scan couldn't be read. Try a clearer scan.";
 
 /**
- * Everything here runs before a single byte is parsed. The page cap exists
- * because ingestion has to finish inside one Vercel function invocation.
- * ponytail: raise MAX_PAGES only alongside a queue — a bigger cap on the same
- * synchronous path just moves the failure from "rejected" to "timed out".
+ * An upload as a PDF: a PDF passes through, and a photo of a letter (JPEG or
+ * PNG) becomes a one-page PDF with no text layer, which ingest then reads as
+ * the scan it effectively is. One pipeline for both, not a second one for
+ * images.
+ *
+ * Decided by magic bytes, never by the filename or the declared type: both
+ * are whatever the client says. The browser re-encodes photos to JPEG before
+ * upload (iPhone HEIC included), so these two formats are all that arrives.
+ * The page cap elsewhere exists because ingestion has to finish inside one
+ * Vercel function invocation. ponytail: raise MAX_PAGES only alongside a queue.
+ * ponytail: one photo per document; a multi-page letter photographed page by
+ * page needs several images joined into one PDF.
  */
-export function validateUpload(bytes: Uint8Array, filename: string): void {
-  if (!/\.pdf$/i.test(filename)) throw badRequest("Only PDF files are accepted.");
+export async function toPdf(bytes: Uint8Array): Promise<Uint8Array> {
   if (bytes.byteLength > MAX_BYTES)
     throw badRequest(`That file is over ${MAX_BYTES / 1024 / 1024} MB.`);
-  // Magic bytes, not the extension: the extension is whatever the client says.
-  const magic = new TextDecoder().decode(bytes.slice(0, 5));
-  if (magic !== "%PDF-") throw badRequest("That file isn't a PDF.");
+  if (new TextDecoder().decode(bytes.slice(0, 5)) === "%PDF-") return bytes;
+
+  const [a, b, c, d] = bytes;
+  const jpeg = a === 0xff && b === 0xd8 && c === 0xff;
+  const png = a === 0x89 && b === 0x50 && c === 0x4e && d === 0x47;
+  if (!jpeg && !png) throw badRequest("Upload a PDF, or a photo of the document (JPG or PNG).");
+
+  try {
+    const doc = await PDFDocument.create();
+    const img = jpeg ? await doc.embedJpg(bytes) : await doc.embedPng(bytes);
+    // A4's width at the photo's own proportions, so the scan reader sees one
+    // page, as if it had come off a scanner.
+    const width = 595;
+    const height = Math.round((width * img.height) / img.width);
+    doc.addPage([width, height]).drawImage(img, { x: 0, y: 0, width, height });
+    return await doc.save();
+  } catch {
+    throw badRequest("That photo couldn't be read. Try a clearer JPG or PNG.");
+  }
 }
 
 const tooThin = (pages: Page[]) =>
