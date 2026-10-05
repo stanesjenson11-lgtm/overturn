@@ -278,7 +278,7 @@ npm run dev
 
 | Command | |
 | --- | --- |
-| `npm test` | 183 tests, no external services (Postgres runs in-process via PGlite) |
+| `npm test` | 198 tests, no external services (Postgres runs in-process via PGlite) |
 | `npm run eval` | the 16 cases → `eval/results.md` (free tier; several minutes) |
 | `npm run scan-bench` | Gemma 4 vs Gemini on seeded scans → `eval/scan-results.md` |
 | `npm run ingest-regulations` | re-run after IRDAI revises a document; it replaces, never duplicates |

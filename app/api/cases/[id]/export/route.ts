@@ -33,7 +33,7 @@ export const GET = route(async (req: Request, ctx: Ctx) => {
     `Exported from Overturn on ${when(new Date().toISOString())} IST`,
     "",
     "Documents",
-    ...(docs.length ? docs.map((d) => `- ${KIND[d.kind]}: ${d.filename}`) : ["- none"]),
+    ...(docs.length ? docs.map((d) => `- ${d.kind ? KIND[d.kind] : "Document"}: ${d.filename}`) : ["- none"]),
   ];
 
   for (const m of messages) {

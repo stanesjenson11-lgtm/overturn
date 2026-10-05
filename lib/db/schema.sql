@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS documents (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id    uuid NOT NULL REFERENCES users ON DELETE CASCADE,
   case_id    uuid NOT NULL REFERENCES cases ON DELETE CASCADE,
-  kind       text NOT NULL CHECK (kind IN ('policy', 'rejection', 'medical')),
+  kind       text CHECK (kind IN ('policy', 'rejection', 'medical')),
   filename   text NOT NULL,
   page_count int,
   status     text NOT NULL DEFAULT 'pending',
@@ -47,6 +47,11 @@ CREATE TABLE IF NOT EXISTS documents (
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (case_id, kind)
 );
+
+-- An upload doesn't say what it is: ingest reads it and sets the kind, so a
+-- document is kind-less until then. The UNIQUE above still holds one of each
+-- per case (NULLs don't collide), and it's what refuses a second letter.
+ALTER TABLE documents ALTER COLUMN kind DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS chunks (
   id           bigserial PRIMARY KEY,

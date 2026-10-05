@@ -28,54 +28,65 @@ const MIN_CHARS_PER_PAGE = 120;
 const SCAN_ERROR =
   "This PDF has no selectable text and the scan couldn't be read. Try a clearer scan.";
 
+/** Photos of one document, taken page by page: one upload, one PDF. Within
+ *  MAX_SCANNED_PAGES, since every photo is a page the model transcribes. */
+export const MAX_PHOTOS = 10;
+
 /**
- * An upload as a PDF: a PDF passes through, and a photo of a letter (JPEG or
- * PNG) becomes a one-page PDF with no text layer, which ingest then reads as
- * the scan it effectively is. One pipeline for both, not a second one for
+ * An upload as a PDF: one PDF passes through, and photos of a letter (JPEG or
+ * PNG, one per page) become a PDF with no text layer, which ingest then reads
+ * as the scan it effectively is. One pipeline for both, not a second one for
  * images.
  *
  * Decided by magic bytes, never by the filename or the declared type: both
  * are whatever the client says. The browser re-encodes photos to JPEG before
  * upload (iPhone HEIC included), so these two formats are all that arrives.
- * The page cap elsewhere exists because ingestion has to finish inside one
- * Vercel function invocation. ponytail: raise MAX_PAGES only alongside a queue.
- * ponytail: one photo per document; a multi-page letter photographed page by
- * page needs several images joined into one PDF.
+ * The size cap is on the whole upload, because that's what Vercel caps.
+ * ponytail: raise MAX_PAGES only alongside a queue.
  */
-export async function toPdf(bytes: Uint8Array): Promise<Uint8Array> {
-  if (bytes.byteLength > MAX_BYTES)
-    throw badRequest(`That file is over ${MAX_BYTES / 1024 / 1024} MB.`);
-  if (new TextDecoder().decode(bytes.slice(0, 5)) === "%PDF-") {
-    await assertSafePdf(bytes);
-    return bytes;
-  }
+export async function toPdf(files: Uint8Array[]): Promise<Uint8Array> {
+  if (!files.length) throw badRequest("No file was uploaded.");
+  const total = files.reduce((n, f) => n + f.byteLength, 0);
+  if (total > MAX_BYTES)
+    throw badRequest(`That upload is over ${MAX_BYTES / 1024 / 1024} MB. Try fewer or smaller photos.`);
 
-  const [a, b, c, d] = bytes;
-  const jpeg = a === 0xff && b === 0xd8 && c === 0xff;
-  const png = a === 0x89 && b === 0x50 && c === 0x4e && d === 0x47;
-  if (!jpeg && !png) throw badRequest("Upload a PDF, or a photo of the document (JPG or PNG).");
-
-  // embedPng decodes every pixel, so a few-KB PNG declaring 50000×50000 would
-  // allocate gigabytes. The header says the size before anything is decoded.
-  // (embedJpg passes the JPEG through without decoding it.)
-  if (png) {
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    if (bytes.byteLength < 24 || view.getUint32(16) * view.getUint32(20) > MAX_PIXELS)
-      throw badRequest("That image is too large. Try a smaller photo.");
+  const pdf = (b: Uint8Array) => new TextDecoder().decode(b.slice(0, 5)) === "%PDF-";
+  if (files.some(pdf)) {
+    if (files.length > 1) throw badRequest("Upload one PDF at a time, or several photos together.");
+    await assertSafePdf(files[0]);
+    return files[0];
   }
+  if (files.length > MAX_PHOTOS)
+    throw badRequest(`Up to ${MAX_PHOTOS} photos at a time: one per page of the document.`);
 
-  try {
-    const doc = await PDFDocument.create();
-    const img = jpeg ? await doc.embedJpg(bytes) : await doc.embedPng(bytes);
-    // A4's width at the photo's own proportions, so the scan reader sees one
-    // page, as if it had come off a scanner.
-    const width = 595;
-    const height = Math.round((width * img.height) / img.width);
-    doc.addPage([width, height]).drawImage(img, { x: 0, y: 0, width, height });
-    return await doc.save();
-  } catch {
-    throw badRequest("That photo couldn't be read. Try a clearer JPG or PNG.");
+  const doc = await PDFDocument.create();
+  for (const bytes of files) {
+    const [a, b, c, d] = bytes;
+    const jpeg = a === 0xff && b === 0xd8 && c === 0xff;
+    const png = a === 0x89 && b === 0x50 && c === 0x4e && d === 0x47;
+    if (!jpeg && !png) throw badRequest("Upload a PDF, or photos of the document (JPG or PNG).");
+
+    // embedPng decodes every pixel, so a few-KB PNG declaring 50000×50000
+    // would allocate gigabytes. The header says the size before anything is
+    // decoded. (embedJpg passes the JPEG through without decoding it.)
+    if (png) {
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      if (bytes.byteLength < 24 || view.getUint32(16) * view.getUint32(20) > MAX_PIXELS)
+        throw badRequest("That image is too large. Try a smaller photo.");
+    }
+
+    try {
+      const img = jpeg ? await doc.embedJpg(bytes) : await doc.embedPng(bytes);
+      // A4's width at the photo's own proportions, so the scan reader sees
+      // pages, as if they had come off a scanner.
+      const width = 595;
+      const height = Math.round((width * img.height) / img.width);
+      doc.addPage([width, height]).drawImage(img, { x: 0, y: 0, width, height });
+    } catch {
+      throw badRequest("A photo couldn't be read. Try a clearer JPG or PNG.");
+    }
   }
+  return doc.save();
 }
 
 /** About a 7000×5700 photo: far beyond what a page needs to be legible. */

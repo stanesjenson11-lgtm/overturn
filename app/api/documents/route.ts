@@ -7,7 +7,6 @@ import {
   getCase,
   listCaseDocuments,
   listDocuments,
-  type DocKind,
 } from "@/lib/db/queries";
 import { ingest } from "@/lib/ingest";
 import { MAX_DOCS_PER_USER, toPdf } from "@/lib/ingest/pdf";
@@ -15,12 +14,6 @@ import { badRequest, json, notFound, route } from "@/lib/http";
 import { assertWithinDailyLimit, rateLimit } from "@/lib/limits";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-const KIND_LABEL: Record<DocKind, string> = {
-  policy: "policy wording",
-  rejection: "rejection letter",
-  medical: "medical document",
-};
 
 export const runtime = "nodejs";
 // Parse (or transcribe a scan) + chunk + embed + key terms has to finish inside
@@ -43,11 +36,10 @@ export const POST = route(async (req: Request) => {
   await rateLimit(`upload:user:${userId}`, 20, 60 * 60);
 
   const form = await req.formData();
-  const file = form.get("file");
-  if (!(file instanceof File)) throw badRequest("No file was uploaded.");
-
-  const kind = form.get("kind");
-  if (!DOC_KINDS.includes(kind as DocKind)) throw badRequest("Say what this document is.");
+  // One PDF, or several photos of one document, a page each. Nobody says which
+  // document it is: ingest reads it and files it.
+  const files = form.getAll("file").filter((f): f is File => f instanceof File);
+  if (!files.length) throw badRequest("No file was uploaded.");
 
   // The case id arrives from the client, so it is checked against this tenant
   // before anything is stored: otherwise a document could be filed into
@@ -55,23 +47,29 @@ export const POST = route(async (req: Request) => {
   // gets the same 404 as someone else's.
   const caseId = String(form.get("caseId") ?? "");
   if (!UUID.test(caseId) || !(await getCase(userId, caseId))) throw notFound();
-  if ((await listCaseDocuments(userId, caseId)).some((d) => d.kind === kind))
-    throw badRequest(`This case already has a ${KIND_LABEL[kind as DocKind]}. Delete it to upload another.`);
+  // One of each kind per case, so a fourth document can only be a duplicate.
+  // Failed ones don't count: they're on screen with their reason, to delete.
+  const held = (await listCaseDocuments(userId, caseId)).filter((d) => d.status !== "failed");
+  if (held.length >= DOC_KINDS.length)
+    throw badRequest("This case already has its three documents. Delete one to add another.");
 
-  // A PDF, or a photo wrapped into one; size and magic bytes are checked
-  // before anything is parsed.
-  const bytes = await toPdf(new Uint8Array(await file.arrayBuffer()));
+  // Size, count, magic bytes and active content are all checked before
+  // anything is parsed; photos come back as one PDF, a page each.
+  const bytes = await toPdf(
+    await Promise.all(files.map(async (f) => new Uint8Array(await f.arrayBuffer()))),
+  );
 
   // Shown back in the UI and the chat export: no control characters, bounded.
-  const filename = file.name.replace(/\p{Cc}/gu, "").trim().slice(0, 200) || "document";
-  const doc = await createDocument(userId, caseId, kind as DocKind, filename);
+  const name = files[0].name.replace(/\p{Cc}/gu, "").trim().slice(0, 160) || "document";
+  const filename = files.length > 1 ? `${files.length} photos (${name}, …)` : name;
+  const doc = await createDocument(userId, caseId, null, filename);
 
   // after() keeps the invocation alive past the response, so the client gets an
   // id to poll immediately instead of holding a request open for 30 seconds.
   // Note this still runs inside maxDuration — it defers the work, not the cap.
   after(async () => {
     try {
-      await ingest(userId, doc.id, doc.kind, bytes);
+      await ingest(userId, doc.id, null, bytes);
     } catch (e) {
       // ingest() already wrote the reason to documents.error, which is what the
       // UI shows. Nothing is listening to this throw.

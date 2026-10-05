@@ -227,7 +227,7 @@ let termTotal = 0;
 for (const [name, fields] of Object.entries(expectedTerms)) {
   const doc = termDocs[name as keyof typeof termDocs];
   const chunks = await listChunks(user.id, doc.id);
-  const { terms } = await extractKeyTerms(doc.kind, chunks);
+  const { terms } = await extractKeyTerms(doc.kind ?? "medical", chunks);
   for (const [field, want] of Object.entries(fields)) {
     termTotal++;
     const got = terms.find((t) => t.field === field);

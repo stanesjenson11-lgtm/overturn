@@ -14,7 +14,7 @@ import {
 } from "@/lib/client";
 import { AnswerText } from "./CitationChip";
 import { DeleteButton, REFRESH } from "./Sidebar";
-import UploadDropzone, { ACCEPT, PlusIcon, uploadDocument } from "./UploadDropzone";
+import AttachMenu, { uploadFiles } from "./AttachMenu";
 
 /** The agent's tool calls, as the user watches them happen. */
 const STAGE_LABEL: Record<string, string> = {
@@ -125,108 +125,11 @@ const STATUS: Record<string, string> = {
   failed: "failed",
 };
 
-const SLOTS: { kind: DocKind; label: string; prompt: string; optional?: boolean }[] = [
-  { kind: "policy", label: "Policy wording", prompt: "Add the policy wording" },
-  { kind: "rejection", label: "Rejection letter", prompt: "Add the rejection letter" },
-  {
-    kind: "medical",
-    label: "Discharge summary",
-    prompt: "Add a discharge summary (optional)",
-    optional: true,
-  },
-];
-
-/**
- * The "+" beside the message box: add a document the case doesn't have yet,
- * as a PDF or a photo, without scrolling back up to the slots. It offers only
- * the kinds still missing, because a case holds one of each.
- */
-function AttachMenu({
-  caseId,
-  missing,
-  onUploaded,
-  onError,
-}: {
-  caseId: string;
-  missing: typeof SLOTS;
-  onUploaded: () => void;
-  onError: (message: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  // A ref, not state: the file picker's change event must see the kind chosen
-  // a moment earlier, whatever has or hasn't re-rendered in between.
-  const kind = useRef<DocKind | null>(null);
-  const input = useRef<HTMLInputElement>(null);
-
-  async function pick(file: File | undefined) {
-    if (!file || !kind.current) return;
-    setBusy(true);
-    try {
-      await uploadDocument(caseId, kind.current, file);
-      onUploaded();
-    } catch (e) {
-      onError(e instanceof Error ? e.message : "Upload failed.");
-    } finally {
-      setBusy(false);
-      kind.current = null;
-      if (input.current) input.current.value = ""; // the same file can be picked again
-    }
-  }
-
-  return (
-    <div
-      className="relative"
-      onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
-      onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
-      }}
-    >
-      <button
-        type="button"
-        aria-label="Add a document"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        disabled={busy || !missing.length}
-        title={missing.length ? "Add a PDF or a photo" : "All three documents are added"}
-        onClick={() => setOpen((o) => !o)}
-        className="flex size-11 shrink-0 items-center justify-center rounded-full text-accent shadow-neu-sm transition hover:shadow-neu active:shadow-neu-inset-sm disabled:opacity-40"
-      >
-        {busy ? <span className="size-2 animate-pulse rounded-full bg-accent" /> : <PlusIcon />}
-      </button>
-
-      {open && (
-        <ul role="menu" className="absolute bottom-full left-0 z-20 mb-2 w-64 rounded-2xl bg-paper p-2 shadow-neu">
-          {missing.map((s) => (
-            <li key={s.kind} role="none">
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  kind.current = s.kind;
-                  setOpen(false);
-                  input.current?.click();
-                }}
-                className="w-full rounded-xl px-3 py-2 text-left text-sm transition hover:shadow-neu-sm"
-              >
-                {s.label}
-                <span className="block text-xs text-muted">PDF or photo</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <input
-        ref={input}
-        type="file"
-        accept={ACCEPT}
-        className="hidden"
-        onChange={(e) => void pick(e.target.files?.[0])}
-      />
-    </div>
-  );
-}
+const KIND_LABEL: Record<DocKind, string> = {
+  policy: "Policy wording",
+  rejection: "Rejection letter",
+  medical: "Medical document",
+};
 
 /** One question the documents may well not answer, so declining gets
  *  discovered by anyone who clicks around, not only by someone who knows to look. */
@@ -262,6 +165,8 @@ export default function CaseView({ caseId, demo }: { caseId: string; demo: boole
   const [streaming, setStreaming] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -297,6 +202,23 @@ export default function CaseView({ caseId, demo }: { caseId: string; demo: boole
   const latestVerdict = messages.filter((m) => m.meta?.verdict).at(-1);
   const terms = docs.find((d) => d.kind === "policy")?.key_terms ?? [];
   const letter = docs.find((d) => d.kind === "rejection")?.key_terms ?? [];
+
+  const missing = (["policy", "rejection"] as const).filter((k) => !docs.some((d) => d.kind === k));
+
+  // From the "+" menu or dropped anywhere on the case: one PDF, or photos.
+  async function addFiles(files: File[]) {
+    if (uploading || !files.length) return;
+    setUploading(true);
+    setError(null);
+    try {
+      await uploadFiles(caseId, files);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload failed.");
+    } finally {
+      setUploading(false);
+    }
+  }
 
   async function removeDoc(id: string) {
     await api(`/api/documents/${id}`, { method: "DELETE" });
@@ -371,7 +293,21 @@ export default function CaseView({ caseId, demo }: { caseId: string; demo: boole
   }
 
   return (
-    <div className="flex h-dvh flex-1 flex-col">
+    <div
+      className={`flex h-dvh flex-1 flex-col transition ${dragging ? "bg-accent-soft" : ""}`}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragging(false);
+        void addFiles(Array.from(e.dataTransfer.files));
+      }}
+    >
       <div className="mx-auto w-full max-w-3xl flex-1 overflow-y-auto px-6 py-8">
         {(demo || messages.length > 0) && (
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3 text-xs">
@@ -403,38 +339,33 @@ export default function CaseView({ caseId, demo }: { caseId: string; demo: boole
           </div>
         )}
 
-        <section aria-labelledby="docs" className="grid gap-3 sm:grid-cols-3">
-          <h2 id="docs" className="sr-only">
-            Documents in this case
-          </h2>
-          {SLOTS.map((slot) => {
-            const doc = docs.find((d) => d.kind === slot.kind);
-            return (
-              <div key={slot.kind}>
-                <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted">
-                  {slot.label}
-                </p>
-                {doc ? (
-                  <div className="group flex items-center gap-1 rounded-xl px-3 py-2.5 shadow-neu-sm">
-                    <div className="min-w-0 flex-1" title={doc.error ?? undefined}>
-                      <p className="truncate text-sm">{doc.filename}</p>
-                      <p className={`text-xs ${doc.status === "failed" ? "text-accent" : "text-muted"}`}>
-                        {doc.status === "ready"
-                          ? `${doc.page_count ?? "?"} pages`
-                          : doc.status === "failed"
-                            ? (doc.error ?? "failed")
-                            : `${STATUS[doc.status] ?? doc.status} …`}
-                      </p>
-                    </div>
-                    <DeleteButton what={doc.filename} onDelete={() => removeDoc(doc.id)} />
-                  </div>
-                ) : (
-                  <UploadDropzone caseId={caseId} kind={slot.kind} prompt={slot.prompt} onUploaded={load} />
-                )}
+        {(docs.length > 0 || uploading) && (
+          <section aria-label="Documents in this case" className="flex flex-wrap gap-2">
+            {docs.map((doc) => (
+              <div key={doc.id} className="flex max-w-xs items-center gap-1 rounded-xl py-1.5 pl-3 pr-1 shadow-neu-sm">
+                <div className="min-w-0 flex-1" title={doc.error ?? doc.filename}>
+                  <p className="truncate text-sm">
+                    {doc.kind ? KIND_LABEL[doc.kind] : doc.status === "failed" ? "Couldn't read this" : "Reading…"}
+                  </p>
+                  <p className={`truncate text-xs ${doc.status === "failed" ? "text-accent" : "text-muted"}`}>
+                    {doc.status === "ready"
+                      ? `${doc.page_count === 1 ? "1 page" : `${doc.page_count ?? "?"} pages`} · ${doc.filename}`
+                      : doc.status === "failed"
+                        ? (doc.error ?? "failed")
+                        : `${STATUS[doc.status] ?? doc.status} …`}
+                  </p>
+                </div>
+                <DeleteButton what={doc.filename} onDelete={() => removeDoc(doc.id)} />
               </div>
-            );
-          })}
-        </section>
+            ))}
+            {uploading && (
+              <p className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-muted shadow-neu-inset-sm">
+                <span className="size-1.5 animate-pulse rounded-full bg-accent" />
+                Uploading…
+              </p>
+            )}
+          </section>
+        )}
 
         {messages.length === 0 && !streaming && (
           <div className="mt-10 max-w-lg">
@@ -443,6 +374,11 @@ export default function CaseView({ caseId, demo }: { caseId: string; demo: boole
             <TermsCard title="Your policy at a glance" terms={terms} />
             {ready ? (
               <>
+                {!reviewable && missing.length > 0 && (
+                  <p className="mt-4 text-sm text-muted">
+                    To review the rejection, add the {missing.map((k) => KIND_LABEL[k].toLowerCase()).join(" and the ")}.
+                  </p>
+                )}
                 {reviewable && (
                   <button
                     type="button"
@@ -469,8 +405,8 @@ export default function CaseView({ caseId, demo }: { caseId: string; demo: boole
               </>
             ) : (
               <p className="mt-3 text-muted">
-                Add the policy wording and the insurer&apos;s rejection letter above. Questions open
-                up once a document is indexed.
+                Add the policy wording and the insurer&apos;s rejection letter with the + below, as
+                PDFs or photos, or drop them here. Overturn works out which is which.
               </p>
             )}
           </div>
@@ -540,12 +476,7 @@ export default function CaseView({ caseId, demo }: { caseId: string; demo: boole
         className="border-t border-line"
       >
         <div className="mx-auto flex max-w-3xl items-center gap-3 px-6 py-4">
-          <AttachMenu
-            caseId={caseId}
-            missing={SLOTS.filter((s) => !docs.some((d) => d.kind === s.kind))}
-            onUploaded={load}
-            onError={setError}
-          />
+          <AttachMenu busy={uploading} full={docs.filter((d) => d.status !== "failed").length >= 3} onFiles={(f) => void addFiles(f)} />
           <input
             value={question}
             onChange={(e) => setQuestion(e.target.value)}

@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { PDFDocument } from "pdf-lib";
 import { chunkPages } from "@/lib/ingest/chunk";
-import { MAX_SCANNED_PAGES, extractPages, toPdf } from "@/lib/ingest/pdf";
+import { MAX_PHOTOS, MAX_SCANNED_PAGES, extractPages, toPdf } from "@/lib/ingest/pdf";
 import { setGenAI } from "@/lib/llm";
 import { MAPLE_COURT, renderPdf } from "@/scripts/fixtures";
 
@@ -27,12 +27,12 @@ describe("what an upload may be", () => {
   };
 
   it("passes a real PDF through untouched", async () => {
-    expect(await toPdf(pdf)).toBe(pdf);
+    expect(await toPdf([pdf])).toBe(pdf);
   });
 
   it("turns a JPEG or PNG photo into a one-page PDF with no text layer", async () => {
     for (const type of ["image/jpeg", "image/png"] as const) {
-      const wrapped = await toPdf(await photo(type));
+      const wrapped = await toPdf([await photo(type)]);
       expect(new TextDecoder().decode(wrapped.slice(0, 5))).toBe("%PDF-");
       const doc = await PDFDocument.load(wrapped);
       expect(doc.getPageCount()).toBe(1);
@@ -43,9 +43,22 @@ describe("what an upload may be", () => {
 
   it("decides by the bytes, not by what the file claims to be", async () => {
     const gif = new TextEncoder().encode("GIF89a and some bytes");
-    await expect(toPdf(gif)).rejects.toThrow(/PDF, or a photo/);
+    await expect(toPdf([gif])).rejects.toThrow(/PDF, or photos/);
     // Claims to be a JPEG (right magic bytes), isn't one.
-    await expect(toPdf(new Uint8Array([0xff, 0xd8, 0xff, 0x00, 1, 2, 3]))).rejects.toThrow(/couldn't be read/);
+    await expect(toPdf([new Uint8Array([0xff, 0xd8, 0xff, 0x00, 1, 2, 3])])).rejects.toThrow(/couldn't be read/);
+  });
+
+  it("joins several photos into one PDF, a page each, in the order given", async () => {
+    const pages = [await photo("image/jpeg"), await photo("image/png"), await photo("image/jpeg")];
+    const doc = await PDFDocument.load(await toPdf(pages));
+    expect(doc.getPageCount()).toBe(3);
+  });
+
+  it("refuses a PDF mixed with photos, two PDFs, or too many photos", async () => {
+    const jpg = await photo("image/jpeg");
+    await expect(toPdf([pdf, jpg])).rejects.toThrow(/one PDF at a time/);
+    await expect(toPdf([pdf, pdf])).rejects.toThrow(/one PDF at a time/);
+    await expect(toPdf(Array(MAX_PHOTOS + 1).fill(jpg))).rejects.toThrow(/Up to 10 photos/);
   });
 });
 

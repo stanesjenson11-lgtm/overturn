@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { api, post, type Case } from "@/lib/client";
 import Logo from "./Logo";
-import { PlusIcon } from "./UploadDropzone";
+import { PlusIcon } from "./AttachMenu";
 
 /** CaseView fires this when an answer lands, so a fresh auto-title shows up
  *  without a reload. Cheaper than a store for the one thing that needs it. */

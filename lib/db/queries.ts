@@ -61,7 +61,7 @@ export type DocKind = (typeof DOC_KINDS)[number];
 export type Doc = {
   id: string;
   case_id: string;
-  kind: DocKind;
+  kind: DocKind | null; // null until ingest has read it
   filename: string;
   page_count: number | null;
   status: string;
@@ -79,7 +79,7 @@ const openDoc = (userId: string) => (d: Doc): Doc => ({
 export async function createDocument(
   userId: string,
   caseId: string,
-  kind: DocKind,
+  kind: DocKind | null,
   filename: string,
 ) {
   const [d] = await tq<Doc>(
@@ -113,6 +113,12 @@ export async function getDocument(userId: string, id: string) {
     [userId, id],
   );
   return d && openDoc(userId)(d);
+}
+
+/** Files the document under its kind. Throws on a unique violation when the
+ *  case already has one of that kind; ingest turns that into the reason. */
+export async function setDocumentKind(userId: string, id: string, kind: DocKind) {
+  await tq(`UPDATE documents SET kind = $3 WHERE user_id = $1 AND id = $2`, [userId, id, kind]);
 }
 
 export async function countDocuments(userId: string) {

@@ -8,8 +8,9 @@ Regenerate with `npm run samples`.
 ## How to try one
 
 1. Sign in, click **New case**.
-2. Drop `shield-health-policy-wording.pdf` into **Policy wording** and one
-   letter into **Rejection letter**. Wait for both to say *pages*.
+2. Click **+** → **Upload PDF** for `shield-health-policy-wording.pdf`, then
+   again for one letter (or drop both onto the page). Overturn labels each one
+   itself: wait for *Policy wording* and *Rejection letter* to show their pages.
 3. Click **Review this rejection**. If the agent asks something, answer from
    the table, then send.
 4. On a *likely challengeable* verdict, click **Download the appeal letter**.

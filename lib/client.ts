@@ -31,7 +31,7 @@ export type DocKind = "policy" | "rejection" | "medical";
 
 export type Doc = {
   id: string;
-  kind: DocKind;
+  kind: DocKind | null; // null while it's being read
   filename: string;
   page_count: number | null;
   status: string;

@@ -13,7 +13,7 @@ const STEPS = [
   },
   {
     title: "Add the two documents",
-    body: "The policy wording (the full terms booklet, not just the one-page schedule) and the insurer's rejection letter. A PDF or a clear phone photo both work. Add the discharge summary too if you have it. Use the slots at the top, or the + beside the message box.",
+    body: "The policy wording (the full terms booklet, not just the one-page schedule) and the insurer's rejection letter. Use the + beside the message box: upload a PDF, or photos of a paper letter (one per page, up to 10), or drop files onto the page. Overturn reads each one and works out which is which. Add the discharge summary too if you have it.",
   },
   {
     title: "Review the rejection",

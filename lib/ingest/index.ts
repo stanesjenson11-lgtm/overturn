@@ -1,14 +1,15 @@
-import { insertChunks, setDocumentStatus } from "../db/queries";
+import { insertChunks, setDocumentKind, setDocumentStatus, type DocKind } from "../db/queries";
 import { recordUsage } from "../limits";
 import { addUsage, type Usage } from "../llm";
 import { embed } from "../rag/embed";
 import { chunkPages } from "./chunk";
+import { classify, KIND_LABEL } from "./classify";
 import { extractPages } from "./pdf";
 import { extractKeyTerms, type KeyTerm } from "./terms";
 
 /**
  * The single ingest path. `POST /api/documents` calls it and so does the seed
- * script, so a seeded lease and an uploaded one are byte-identical in the
+ * script, so a seeded document and an uploaded one are byte-identical in the
  * database — no second embedding code path to drift out of sync with this one.
  *
  * Status is written at each stage so the UI can show `parsing → embedding →
@@ -17,9 +18,10 @@ import { extractKeyTerms, type KeyTerm } from "./terms";
 export async function ingest(
   userId: string,
   documentId: string,
-  kind: string,
+  // Null for an upload: the document's own text decides. Seed and eval pass it.
+  kind: DocKind | null,
   bytes: Uint8Array,
-): Promise<{ pages: number; chunks: number }> {
+): Promise<{ pages: number; chunks: number; kind: DocKind }> {
   // Model tokens spent reading the upload count toward the same daily cap as
   // questions, or delete-and-reupload would be an uncapped way to spend them.
   let usage: Usage = { in: 0, out: 0 };
@@ -28,6 +30,20 @@ export async function ingest(
   try {
     await setDocumentStatus(userId, documentId, "parsing");
     const pages = await extractPages(bytes, spend);
+
+    // Filed before anything is embedded, so a second rejection letter fails
+    // here, cheaply, rather than after spending embedding quota on it.
+    if (!kind) {
+      kind = classify(pages);
+      try {
+        await setDocumentKind(userId, documentId, kind);
+      } catch (e) {
+        if (!/unique|duplicate/i.test(String(e))) throw e;
+        throw new Error(
+          `This reads as a ${KIND_LABEL[kind]}, and the case already has one. Delete one of them.`,
+        );
+      }
+    }
 
     const chunks = chunkPages(pages);
     if (chunks.length === 0)
@@ -61,7 +77,7 @@ export async function ingest(
     );
 
     await setDocumentStatus(userId, documentId, "ready", { pageCount: pages.length, keyTerms });
-    return { pages: pages.length, chunks: chunks.length };
+    return { pages: pages.length, chunks: chunks.length, kind };
   } catch (e) {
     // The user needs to know *why*, and `documents.error` is where the UI reads
     // it from. Rethrow so the caller still sees the failure.
