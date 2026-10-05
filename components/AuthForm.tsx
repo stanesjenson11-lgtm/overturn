@@ -33,7 +33,7 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
     <main className="flex min-h-dvh items-center justify-center px-6">
       <div className="w-full max-w-sm rounded-3xl p-8 shadow-neu">
         <Link href="/" className="text-sm uppercase tracking-[0.2em] text-muted">
-          LeaseLens
+          Overturn
         </Link>
         <h1 className="mt-3 font-serif text-3xl">
           {register ? "Create an account" : "Welcome back"}

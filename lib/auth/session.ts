@@ -23,7 +23,7 @@ export async function signSession(userId: string): Promise<string> {
 /**
  * One cookie, and nothing clever about it.
  *
- * The split-deploy version of LeaseLens needed an in-memory access token plus a
+ * The split-deploy version of the LeaseLens engine this grew from needed an in-memory access token plus a
  * rotating opaque refresh token in a `SameSite=None; Path=/auth` cookie, plus a
  * proxy rewrite to make that cookie first-party across two origins. All of that
  * existed to work around the deployment split. Same origin, so: SameSite=Lax

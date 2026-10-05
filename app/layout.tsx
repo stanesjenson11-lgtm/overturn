@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "LeaseLens — ask your lease what it actually says",
+  title: "Overturn — check a rejected health insurance claim",
   description:
-    "Upload a lease. Every answer quotes the governing clause and cites the page — and says so when the lease doesn't cover it.",
+    "Upload your policy and the rejection letter. Overturn checks the reason against your policy and IRDAI's rules, says plainly whether it holds up, and drafts a cited appeal.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
