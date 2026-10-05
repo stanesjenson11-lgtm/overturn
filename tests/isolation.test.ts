@@ -290,9 +290,10 @@ describe("opening a new case", () => {
     // sweeps this still-empty draft and may reuse its number, but no two live
     // cases ever share a name.
     expect(fresh.title).toMatch(/^Draft case \d+$/);
+    // (The untitled ones are created directly in this test; the route always names a case.)
     const titles = ((await (await listCasesRoute(get("/api/cases", B.cookie))).json()) as {
-      title: string;
-    }[]).map((c) => c.title);
+      title: string | null;
+    }[]).flatMap((c) => (c.title ? [c.title] : []));
     expect(new Set(titles).size).toBe(titles.length);
 
     const mine = ((await (await listCasesRoute(get("/api/cases", B.cookie))).json()) as {
