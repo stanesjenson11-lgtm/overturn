@@ -29,6 +29,17 @@ describe("the tenant guard", () => {
     expect(tenancyViolation("DELETE FROM documents WHERE id = $1")).toContain("documents");
   });
 
+  it("builds no SQL from values: every interpolation is a $n placeholder", () => {
+    // The SQL-injection guard. Values travel as parameters; the only things
+    // spliced into SQL text are placeholder numbers for multi-row inserts. A
+    // `${userInput}` anywhere in a SQL string fails here before review.
+    const spliced = [...source.matchAll(/`([^`]*)`/g)].flatMap((m) =>
+      [...m[1].matchAll(/\$\{([^}]*)\}/g)].map((x) => x[1]),
+    );
+    expect(spliced.length).toBeGreaterThan(0); // not vacuous
+    for (const expr of spliced) expect(expr).toMatch(/^(i \+ \d|values\.join\(", "\))$/);
+  });
+
   it("does not flag statements against non-tenant tables", () => {
     expect(tenancyViolation("SELECT id FROM users WHERE email = $1")).toBeNull();
   });

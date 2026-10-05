@@ -3,6 +3,8 @@ import type { PGlite } from "@electric-sql/pglite";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { COOKIE, readCookie, session, signSession } from "@/lib/auth/session";
 import { POST as register } from "@/app/api/auth/register/route";
+import { findUserById } from "@/lib/db/queries";
+import { CONSENT_VERSION } from "@/lib/legal";
 import { POST as login } from "@/app/api/auth/login/route";
 import { POST as logout } from "@/app/api/auth/logout/route";
 import { GET as me } from "@/app/api/auth/me/route";
@@ -61,14 +63,19 @@ describe("sessions", () => {
 });
 
 describe("the auth round trip", () => {
-  const creds = { email: "Tenant@Example.com ", password: "a-long-enough-password" };
+  const creds = { email: "Tenant@Example.com ", password: "a-long-enough-password", consent: true };
 
   it("registers, signs in, reads me, and signs out", async () => {
     const created = await register(jsonReq(creds));
     expect(created.status).toBe(201);
     // Normalised on the way in, so "Tenant@Example.com" and "tenant@example.com"
     // are one account rather than two.
-    expect((await created.json()).email).toBe("tenant@example.com");
+    const body = await created.json();
+    expect(body.email).toBe("tenant@example.com");
+    // Consent is recorded with the notice version it was given against.
+    const stored = await findUserById(body.id);
+    expect(stored.consented_at).not.toBeNull();
+    expect(stored.consent_version).toBe(CONSENT_VERSION);
 
     const cookie = cookieFrom(created);
     const whoami = await me(new Request("http://localhost/api", { headers: { cookie } }));
@@ -95,13 +102,22 @@ describe("the auth round trip", () => {
     expect(wrong.headers.get("set-cookie")).toBeNull();
   });
 
+  it("refuses to register without consent, and creates nothing", async () => {
+    for (const consent of [undefined, false, "true"]) {
+      const res = await register(jsonReq({ email: "noconsent@example.com", password: "long-enough-pass", consent }));
+      expect(res.status).toBe(400);
+    }
+    const after = await login(jsonReq({ email: "noconsent@example.com", password: "long-enough-pass" }));
+    expect(after.status).toBe(404);
+  });
+
   it("refuses a short password", async () => {
     const res = await register(jsonReq({ email: "short@example.com", password: "tiny" }));
     expect(res.status).toBe(400);
   });
 
   it("sets an httpOnly, same-site cookie scoped to the whole app", async () => {
-    const res = await register(jsonReq({ email: "flags@example.com", password: "another-long-one" }));
+    const res = await register(jsonReq({ email: "flags@example.com", password: "another-long-one", consent: true }));
     const header = res.headers.get("set-cookie")!;
     // Path=/ matters here in a way it did not in the split deploy: the browser
     // sends this on every request because there is only one origin to send to.

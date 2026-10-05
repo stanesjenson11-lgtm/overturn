@@ -142,7 +142,10 @@ export default function Sidebar() {
 
       <div className="flex items-center justify-between border-t border-line pt-3 text-xs">
         <Link href="/guide" className="text-muted underline-offset-2 hover:underline">
-          How to use Overturn
+          How to use
+        </Link>
+        <Link href="/cases/account" className="text-muted underline-offset-2 hover:underline">
+          Your data
         </Link>
         <button type="button" onClick={signOut} className="text-muted hover:underline">
           Sign out

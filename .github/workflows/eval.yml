@@ -17,7 +17,7 @@ jobs:
     # Skipped, not failed, until the secrets exist, so the repo doesn't post a
     # red run every night before it's been given a database.
     env:
-      READY: ${{ secrets.DATABASE_URL != '' && secrets.GOOGLE_API_KEY != '' }}
+      READY: ${{ secrets.DATABASE_URL != '' && secrets.GOOGLE_API_KEY != '' && secrets.DATA_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
         if: env.READY == 'true'
@@ -35,6 +35,7 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          DATA_KEY: ${{ secrets.DATA_KEY }}
         # The regulations must be in the database before any case can cite
         # them; re-ingesting is idempotent and picks up an IRDAI revision.
         run: |

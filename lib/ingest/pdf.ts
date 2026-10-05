@@ -1,4 +1,4 @@
-import { PDFDocument } from "pdf-lib";
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFStream, type PDFObject } from "pdf-lib";
 import { Type, type Schema } from "@google/genai";
 import { extractText } from "unpdf";
 import { badRequest } from "../http";
@@ -45,12 +45,24 @@ const SCAN_ERROR =
 export async function toPdf(bytes: Uint8Array): Promise<Uint8Array> {
   if (bytes.byteLength > MAX_BYTES)
     throw badRequest(`That file is over ${MAX_BYTES / 1024 / 1024} MB.`);
-  if (new TextDecoder().decode(bytes.slice(0, 5)) === "%PDF-") return bytes;
+  if (new TextDecoder().decode(bytes.slice(0, 5)) === "%PDF-") {
+    await assertSafePdf(bytes);
+    return bytes;
+  }
 
   const [a, b, c, d] = bytes;
   const jpeg = a === 0xff && b === 0xd8 && c === 0xff;
   const png = a === 0x89 && b === 0x50 && c === 0x4e && d === 0x47;
   if (!jpeg && !png) throw badRequest("Upload a PDF, or a photo of the document (JPG or PNG).");
+
+  // embedPng decodes every pixel, so a few-KB PNG declaring 50000×50000 would
+  // allocate gigabytes. The header says the size before anything is decoded.
+  // (embedJpg passes the JPEG through without decoding it.)
+  if (png) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (bytes.byteLength < 24 || view.getUint32(16) * view.getUint32(20) > MAX_PIXELS)
+      throw badRequest("That image is too large. Try a smaller photo.");
+  }
 
   try {
     const doc = await PDFDocument.create();
@@ -64,6 +76,60 @@ export async function toPdf(bytes: Uint8Array): Promise<Uint8Array> {
   } catch {
     throw badRequest("That photo couldn't be read. Try a clearer JPG or PNG.");
   }
+}
+
+/** About a 7000×5700 photo: far beyond what a page needs to be legible. */
+const MAX_PIXELS = 40_000_000;
+
+/** Keys and action types that make a PDF do something rather than show something. */
+const ACTIVE_KEYS = new Set(["JS", "JavaScript", "Launch", "EmbeddedFile", "EmbeddedFiles", "EF", "RichMedia", "XFA"]);
+const ACTIVE_ACTIONS = new Set(["JavaScript", "Launch", "SubmitForm", "ImportData", "GoToE"]);
+
+const UNSAFE =
+  "This PDF contains scripts or attached files, which Overturn doesn't accept. " +
+  "Open it and use Print → Save as PDF, then upload that copy.";
+
+/**
+ * Refuses a PDF that carries active content: scripts, launch actions,
+ * attached files, form submission, or encryption that hides its insides.
+ *
+ * Nothing here ever runs a PDF's script: the upload is parsed for text and
+ * thrown away, never stored or served back. So this isn't protecting a
+ * viewer; it's refusing files that are built to do something, because an
+ * insurer's letter has no reason to, and it narrows what reaches the parsers.
+ *
+ * pdf-lib parses the whole object graph, object streams included, and names
+ * come back decoded, so `/J#61vaScript` is still JavaScript. No antivirus
+ * service on purpose: that would send people's health documents to a third
+ * party.
+ */
+export async function assertSafePdf(bytes: Uint8Array): Promise<void> {
+  let doc: PDFDocument;
+  try {
+    doc = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+  } catch {
+    throw badRequest("That PDF could not be read. It may be damaged. Try Print → Save as PDF.");
+  }
+  // Encrypted streams can't be inspected, so they can't be vouched for.
+  if (doc.isEncrypted)
+    throw badRequest(
+      "That PDF is password-protected or encrypted. Open it, use Print → Save as PDF, and upload that copy.",
+    );
+
+  const active = (o: PDFObject): boolean => {
+    if (o instanceof PDFStream) return active(o.dict);
+    if (o instanceof PDFArray) return o.asArray().some(active);
+    if (!(o instanceof PDFDict)) return false;
+    for (const [k, v] of o.entries()) {
+      if (ACTIVE_KEYS.has(k.decodeText())) return true;
+      if (k.decodeText() === "S" && v instanceof PDFName && ACTIVE_ACTIONS.has(v.decodeText())) return true;
+      // References are skipped here: every indirect object is visited below anyway.
+      if (active(v)) return true;
+    }
+    return false;
+  };
+
+  if (doc.context.enumerateIndirectObjects().some(([, o]) => active(o))) throw badRequest(UNSAFE);
 }
 
 const tooThin = (pages: Page[]) =>
@@ -81,13 +147,15 @@ export async function extractPages(
     // A copy, deliberately: pdf.js detaches the ArrayBuffer it is handed, so
     // the caller's `bytes` would be a zero-length view afterwards and any
     // second read of the same upload would fail as "damaged".
+    // The bundled pdf.js (unpdf 1.8) has no eval path left at all, so the
+    // CVE-2024-4367 class (code compiled from a font program) can't recur.
     ({ totalPages, text } = await extractText(new Uint8Array(bytes), { mergePages: false }));
   } catch {
     throw badRequest("That PDF could not be read. It may be encrypted or damaged.");
   }
 
   if (totalPages > MAX_PAGES)
-    throw badRequest(`That lease is ${totalPages} pages; the limit is ${MAX_PAGES}.`);
+    throw badRequest(`That document is ${totalPages} pages; the limit is ${MAX_PAGES}.`);
 
   const pages = text.map((t, i) => ({ number: i + 1, text: t ?? "" }));
   if (!tooThin(pages)) return pages;

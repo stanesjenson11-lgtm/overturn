@@ -29,6 +29,7 @@ console.log = console.error;
 
 required("DATABASE_URL");
 required("GOOGLE_API_KEY");
+required("DATA_KEY");
 
 const EMAIL = process.argv[2] ?? "demo@overturn.app";
 const user = await findUserByEmail(EMAIL);

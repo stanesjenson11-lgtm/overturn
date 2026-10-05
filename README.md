@@ -237,12 +237,38 @@ resource exists. Two came with multi-document cases: filing a document into
 someone else's case (the case id arrives in the upload form), and smuggling
 someone else's document id into a search alongside your own.
 
+## Security and privacy
+
+The documents are people's medical claims, so isolation is only the start
+([SECURITY.md](SECURITY.md) has the whole list, the breach runbook and the
+limits):
+
+- **Encrypted twice.** Neon encrypts the disk; on top of that, messages,
+  verdicts, case titles, file names and key terms are sealed with AES-256-GCM
+  before they reach Postgres, bound to their owner, so a leaked backup or a
+  copied row reads as ciphertext ([lib/crypto.ts](lib/crypto.ts)).
+- **No SQL built from values,** enforced by a test that fails on any
+  interpolation in `queries.ts` other than a `$n` placeholder.
+- **Sign-in is rate-limited and bot-checked** (Cloudflare Turnstile), limits
+  live in Postgres as one atomic upsert, and uploads, questions and exports
+  have per-user limits.
+- **Uploads are inspected, never kept.** PDFs carrying scripts, launch
+  actions, attachments or encryption are refused (object streams decoded,
+  names unescaped), and PNG decompression bombs are refused from the header.
+  No antivirus service: that would send the documents to a third party.
+- **DPDP Act 2023 and Rules 2025.** Consent at sign-up is an unticked box,
+  recorded with the notice version; [/privacy](app/privacy/page.tsx) itemises
+  what is held and who processes it; users can download everything (JSON, or a
+  case as PDF) and delete their account, which cascades through every table;
+  sign-ins and deletions are logged for a year.
+- **CSP, HSTS, nosniff, no framing**, and a production dependency audit in CI.
+
 ---
 
 ## Running it
 
 ```bash
-cp .env.example .env.local     # DATABASE_URL, SESSION_SECRET, GOOGLE_API_KEY
+cp .env.example .env.local     # DATABASE_URL, SESSION_SECRET, GOOGLE_API_KEY, DATA_KEY
 npm install
 npm run migrate                # idempotent
 npm run ingest-regulations     # downloads IRDAI's PDFs into corpus/, ~3 min on the free tier
@@ -252,7 +278,7 @@ npm run dev
 
 | Command | |
 | --- | --- |
-| `npm test` | 160 tests, no external services (Postgres runs in-process via PGlite) |
+| `npm test` | 183 tests, no external services (Postgres runs in-process via PGlite) |
 | `npm run eval` | the 16 cases → `eval/results.md` (free tier; several minutes) |
 | `npm run scan-bench` | Gemma 4 vs Gemini on seeded scans → `eval/scan-results.md` |
 | `npm run ingest-regulations` | re-run after IRDAI revises a document; it replaces, never duplicates |
@@ -281,10 +307,18 @@ start it already holds `DATABASE_URL`. Daily caps apply.
 2. **Google AI Studio**: an API key. The free tier is enough for a demo, with
    its limits: 5 requests a minute on the answer model, 100 embedded texts a
    minute (`embed()` paces itself under that).
-3. **Vercel**: import the repo and set `DATABASE_URL`, `SESSION_SECRET`,
-   `GOOGLE_API_KEY`.
-4. **GitHub** secrets for CI's deploy step and the nightly eval.
-5. `npm run migrate && npm run ingest-regulations && npm run seed` once against
+3. **Cloudflare Turnstile**: add a widget for your domain (and `localhost`).
+   Without its secret, production refuses sign-ins rather than skipping the
+   bot check.
+4. **Vercel**: import the repo and set `DATABASE_URL`, `SESSION_SECRET`,
+   `GOOGLE_API_KEY`, `DATA_KEY` (`openssl rand -base64 32`; keep a copy:
+   losing it loses the encrypted rows), `NEXT_PUBLIC_TURNSTILE_SITE_KEY`,
+   `TURNSTILE_SECRET_KEY` and `CONTACT_EMAIL`. Set `LLM_PAID_TIER=true` only
+   once the Google key is billing-enabled: until then the app is a demo for the
+   sample documents. Functions run in `sin1`, next to a Singapore database.
+5. **GitHub** secrets for CI's deploy step and the nightly eval (which also
+   needs `DATA_KEY`).
+6. `npm run migrate && npm run ingest-regulations && npm run seed` once against
    production, and `npm run migrate` again **before** pushing any change to
    `schema.sql`: CI deploys code, not schema.
 

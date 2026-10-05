@@ -104,6 +104,7 @@ export const toWinAnsi = (s: string) =>
     .replace(/[“”]/g, '"')
     .replace(/[–—]/g, "-")
     .replace(/…/g, "...")
+    .replace(/ ?· ?/g, " - ")
     .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, "");
 
 /** Renders text to a real PDF: line wrapping, page breaks, an actual text layer. */

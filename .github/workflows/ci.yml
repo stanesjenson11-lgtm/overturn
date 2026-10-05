@@ -26,6 +26,10 @@ jobs:
 
       - run: npm ci
 
+      # Production dependencies only: a dev-tool advisory can't reach a user.
+      - name: Audit
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Typecheck
         run: npx tsc --noEmit
 

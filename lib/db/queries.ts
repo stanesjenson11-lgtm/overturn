@@ -9,6 +9,7 @@
  */
 import type { Chunk } from "../ingest/chunk";
 import type { KeyTerm } from "../ingest/terms";
+import { open, openJson, seal, sealJson } from "../crypto";
 import { raw, tq, toVector, type Row } from "./client";
 
 // ---------------------------------------------------------------- users
@@ -17,10 +18,11 @@ import { raw, tq, toVector, type Row } from "./client";
 
 export type User = { id: string; email: string; password_hash: string };
 
-export async function createUser(email: string, passwordHash: string) {
+export async function createUser(email: string, passwordHash: string, consentVersion: string) {
   const [u] = await raw<{ id: string; email: string }>(
-    `INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email`,
-    [email, passwordHash],
+    `INSERT INTO users (email, password_hash, consented_at, consent_version)
+     VALUES ($1, $2, now(), $3) RETURNING id, email`,
+    [email, passwordHash, consentVersion],
   );
   return u;
 }
@@ -34,11 +36,21 @@ export async function findUserByEmail(email: string) {
 }
 
 export async function findUserById(id: string) {
-  const [u] = await raw<{ id: string; email: string }>(
-    `SELECT id, email FROM users WHERE id = $1`,
-    [id],
-  );
+  const [u] = await raw<{
+    id: string;
+    email: string;
+    created_at: string;
+    consented_at: string | null;
+    consent_version: string | null;
+  }>(`SELECT id, email, created_at, consented_at, consent_version FROM users WHERE id = $1`, [id]);
   return u;
+}
+
+/** Every tenant table cascades on users, so this one statement is the whole
+ *  erasure: cases, documents, chunks, messages, usage, traces. */
+export async function deleteUser(id: string) {
+  const rows = await raw<{ id: string }>(`DELETE FROM users WHERE id = $1 RETURNING id`, [id]);
+  return rows.length > 0;
 }
 
 // ------------------------------------------------------------ documents
@@ -58,6 +70,12 @@ export type Doc = {
   created_at: string;
 };
 
+const openDoc = (userId: string) => (d: Doc): Doc => ({
+  ...d,
+  filename: open(userId, d.filename),
+  key_terms: openJson(userId, d.key_terms),
+});
+
 export async function createDocument(
   userId: string,
   caseId: string,
@@ -67,9 +85,9 @@ export async function createDocument(
   const [d] = await tq<Doc>(
     `INSERT INTO documents (user_id, case_id, kind, filename) VALUES ($1, $2, $3, $4)
      RETURNING id, case_id, kind, filename, page_count, status, error, key_terms, created_at`,
-    [userId, caseId, kind, filename],
+    [userId, caseId, kind, seal(userId, filename)],
   );
-  return d;
+  return openDoc(userId)(d);
 }
 
 export async function listDocuments(userId: string) {
@@ -77,7 +95,7 @@ export async function listDocuments(userId: string) {
     `SELECT id, case_id, kind, filename, page_count, status, error, key_terms, created_at
      FROM documents WHERE user_id = $1 ORDER BY created_at DESC`,
     [userId],
-  );
+  ).then((rows) => rows.map(openDoc(userId)));
 }
 
 export async function listCaseDocuments(userId: string, caseId: string) {
@@ -85,7 +103,7 @@ export async function listCaseDocuments(userId: string, caseId: string) {
     `SELECT id, case_id, kind, filename, page_count, status, error, key_terms, created_at
      FROM documents WHERE user_id = $1 AND case_id = $2 ORDER BY created_at`,
     [userId, caseId],
-  );
+  ).then((rows) => rows.map(openDoc(userId)));
 }
 
 export async function getDocument(userId: string, id: string) {
@@ -94,7 +112,7 @@ export async function getDocument(userId: string, id: string) {
      FROM documents WHERE user_id = $1 AND id = $2`,
     [userId, id],
   );
-  return d;
+  return d && openDoc(userId)(d);
 }
 
 export async function countDocuments(userId: string) {
@@ -126,7 +144,7 @@ export async function setDocumentStatus(
       status,
       extra.pageCount ?? null,
       extra.error ?? null,
-      extra.keyTerms == null ? null : JSON.stringify(extra.keyTerms),
+      sealJson(userId, extra.keyTerms),
     ],
   );
 }
@@ -313,6 +331,11 @@ export type Case = {
   created_at: string;
 };
 
+const openCase = (userId: string) => (c: Case): Case => ({
+  ...c,
+  title: c.title == null ? null : open(userId, c.title),
+});
+
 /** A new case's name ("Draft case 3") until its first review names it after the claim. */
 export const DRAFT_TITLE = /^Draft case \d+$/;
 
@@ -320,9 +343,9 @@ export async function createCase(userId: string, title: string | null) {
   const [c] = await tq<Case>(
     `INSERT INTO cases (user_id, title) VALUES ($1, $2)
      RETURNING id, title, created_at`,
-    [userId, title],
+    [userId, title == null ? null : seal(userId, title)],
   );
-  return c;
+  return openCase(userId)(c);
 }
 
 export async function listCases(userId: string) {
@@ -330,7 +353,7 @@ export async function listCases(userId: string) {
     `SELECT id, title, created_at
      FROM cases WHERE user_id = $1 ORDER BY created_at DESC`,
     [userId],
-  );
+  ).then((rows) => rows.map(openCase(userId)));
 }
 
 export async function getCase(userId: string, id: string) {
@@ -339,7 +362,7 @@ export async function getCase(userId: string, id: string) {
      FROM cases WHERE user_id = $1 AND id = $2`,
     [userId, id],
   );
-  return c;
+  return c && openCase(userId)(c);
 }
 
 /** Documents, chunks and messages cascade on the cases FK, so one statement
@@ -384,7 +407,7 @@ export async function deleteEmptyCases(userId: string) {
 }
 
 export async function setCaseTitle(userId: string, id: string, title: string) {
-  await tq(`UPDATE cases SET title = $3 WHERE user_id = $1 AND id = $2`, [userId, id, title]);
+  await tq(`UPDATE cases SET title = $3 WHERE user_id = $1 AND id = $2`, [userId, id, seal(userId, title)]);
 }
 
 // ------------------------------------------------------------- messages
@@ -403,10 +426,15 @@ export async function listMessages(userId: string, caseId: string) {
     `SELECT id::text AS id, role, content, citations, meta, created_at
        FROM messages WHERE user_id = $1 AND case_id = $2 ORDER BY id`,
     [userId, caseId],
+  ).then((rows) =>
+    rows.map((m) => ({
+      ...m,
+      content: open(userId, m.content),
+      citations: openJson(userId, m.citations),
+      meta: openJson(userId, m.meta),
+    })),
   );
 }
-
-const asJson = (v: unknown) => (v == null ? null : JSON.stringify(v));
 
 export async function insertMessage(
   userId: string,
@@ -419,7 +447,7 @@ export async function insertMessage(
   const [m] = await tq<{ id: string }>(
     `INSERT INTO messages (user_id, case_id, role, content, citations, meta)
      VALUES ($1, $2, $3, $4, $5, $6) RETURNING id::text AS id`,
-    [userId, caseId, role, content, asJson(citations), asJson(meta)],
+    [userId, caseId, role, seal(userId, content), sealJson(userId, citations), sealJson(userId, meta)],
   );
   return m;
 }
@@ -455,4 +483,31 @@ export async function insertTrace(userId: string, caseId: string | null, spans: 
     caseId,
     JSON.stringify(spans),
   ]);
+}
+
+// ------------------------------------------------- rate limits + security log
+// Neither is a tenant table: a rate-limit key may be an IP, and the log has to
+// outlive the account it describes.
+
+/** Counts one request against `key` in the current fixed window; returns the
+ *  count so far, this one included. One atomic upsert, so concurrent requests
+ *  can't both read "under the limit". */
+export async function hitRateLimit(key: string, windowStart: Date) {
+  const [r] = await raw<{ count: number }>(
+    `INSERT INTO rate_limits (key, window_start) VALUES ($1, $2)
+     ON CONFLICT (key, window_start) DO UPDATE SET count = rate_limits.count + 1
+     RETURNING count`,
+    [key, windowStart.toISOString()],
+  );
+  return Number(r.count);
+}
+
+export async function logSecurityEvent(event: string, userId: string | null, ip: string | null) {
+  await raw(`INSERT INTO security_log (event, user_id, ip) VALUES ($1, $2, $3)`, [event, userId, ip]);
+}
+
+/** Old counters are useless after their window; security logs are kept a year. */
+export async function purgeExpired() {
+  await raw(`DELETE FROM rate_limits WHERE window_start < now() - interval '1 day'`, []);
+  await raw(`DELETE FROM security_log WHERE at < now() - interval '1 year'`, []);
 }

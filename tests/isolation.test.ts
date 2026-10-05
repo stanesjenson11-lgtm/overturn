@@ -59,7 +59,7 @@ const upload = (caseId: string, cookie?: string) => {
 };
 
 async function makeActor(email: string, seed: number): Promise<Actor> {
-  const res = await register(post("/api/auth/register", { email, password: "a-long-password" }));
+  const res = await register(post("/api/auth/register", { email, password: "a-long-password", consent: true }));
   const { id } = (await res.json()) as { id: string };
   const cookie = res.headers.get("set-cookie")!.split(";")[0];
 

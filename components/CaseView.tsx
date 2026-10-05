@@ -255,7 +255,7 @@ function TermsCard({ title, terms }: { title: string; terms: KeyTerm[] }) {
   );
 }
 
-export default function CaseView({ caseId }: { caseId: string }) {
+export default function CaseView({ caseId, demo }: { caseId: string; demo: boolean }) {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [question, setQuestion] = useState("");
@@ -373,6 +373,36 @@ export default function CaseView({ caseId }: { caseId: string }) {
   return (
     <div className="flex h-dvh flex-1 flex-col">
       <div className="mx-auto w-full max-w-3xl flex-1 overflow-y-auto px-6 py-8">
+        {(demo || messages.length > 0) && (
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3 text-xs">
+            {demo ? (
+              <p className="rounded-lg bg-accent-soft px-3 py-1.5 text-accent">
+                Demo: try it with the{" "}
+                <a
+                  href="https://github.com/stanesjenson11-lgtm/overturn/tree/main/samples"
+                  className="font-medium underline underline-offset-2"
+                >
+                  sample documents
+                </a>
+                , not your own.{" "}
+                <a href="/privacy#ai" className="underline underline-offset-2">
+                  Why?
+                </a>
+              </p>
+            ) : (
+              <span />
+            )}
+            {messages.length > 0 && (
+              <a
+                href={`/api/cases/${caseId}/export`}
+                className="font-medium text-accent underline-offset-2 hover:underline"
+              >
+                Download chat (PDF)
+              </a>
+            )}
+          </div>
+        )}
+
         <section aria-labelledby="docs" className="grid gap-3 sm:grid-cols-3">
           <h2 id="docs" className="sr-only">
             Documents in this case

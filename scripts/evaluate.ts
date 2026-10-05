@@ -18,6 +18,7 @@ import {
   type Doc,
 } from "@/lib/db/queries";
 import { ingest } from "@/lib/ingest";
+import { CONSENT_VERSION } from "@/lib/legal";
 import { extractKeyTerms } from "@/lib/ingest/terms";
 import { genAI, withRetry } from "@/lib/llm";
 import type { Citation } from "@/lib/rag/types";
@@ -40,6 +41,7 @@ import { rejectionLetter, renderPdf, SHIELD_POLICY, type LetterFields } from "./
  */
 required("DATABASE_URL");
 required("GOOGLE_API_KEY");
+required("DATA_KEY");
 
 // A chat request can't wait out a per-minute quota window; this script can,
 // and a 429 scored as a wrong answer would corrupt every number below.
@@ -65,7 +67,11 @@ const cases: Case[] = readFileSync(path.join(process.cwd(), "eval/cases.jsonl"),
 await applySchema();
 const user =
   (await findUserByEmail(EMAIL)) ??
-  (await createUser(EMAIL, await hashPassword(createHash("sha256").update(EMAIL).digest("hex"))));
+  (await createUser(
+    EMAIL,
+    await hashPassword(createHash("sha256").update(EMAIL).digest("hex")),
+    CONSENT_VERSION,
+  ));
 
 const hash = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 10);
 

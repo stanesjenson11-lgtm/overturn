@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import Script from "next/script";
+import { useEffect, useRef, useState } from "react";
 import { post } from "@/lib/client";
 import Logo from "./Logo";
 
@@ -11,12 +12,50 @@ import Logo from "./Logo";
 // up in history, referrers and server logs.
 const CARRY = "overturn:email";
 
+// Cloudflare Turnstile. Unset (local dev without keys) means no widget, and
+// the server skips the check outside production.
+const SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+
+declare global {
+  interface Window {
+    turnstile?: {
+      render(el: HTMLElement, opts: Record<string, unknown>): string;
+      reset(id: string): void;
+      remove(id: string): void;
+    };
+  }
+}
+
 export default function AuthForm({ mode }: { mode: "login" | "register" }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [consent, setConsent] = useState(false);
+  const [token, setToken] = useState("");
+  const box = useRef<HTMLDivElement>(null);
+  const widget = useRef<string | null>(null);
+
+  // Rendered explicitly, not by class name: the script loads once, but this
+  // form mounts again on every switch between sign-in and sign-up.
+  const renderWidget = () => {
+    if (!SITE_KEY || !box.current || !window.turnstile || widget.current) return;
+    widget.current = window.turnstile.render(box.current, {
+      sitekey: SITE_KEY,
+      callback: setToken,
+      "expired-callback": () => setToken(""),
+      "error-callback": () => setToken(""),
+    });
+  };
+
+  useEffect(
+    () => () => {
+      if (widget.current) window.turnstile?.remove(widget.current);
+      widget.current = null;
+    },
+    [],
+  );
 
   const register = mode === "register";
 
@@ -35,7 +74,7 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
     setBusy(true);
     setError(null);
     try {
-      await post(`/api/auth/${mode}`, { email, password });
+      await post(`/api/auth/${mode}`, { email, password, consent, turnstileToken: token });
       // The session cookie is already set by the response; nothing to store.
       router.push("/cases");
       router.refresh();
@@ -45,6 +84,9 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
         status: (err as { status?: number }).status,
       });
       setBusy(false);
+      // A token is good for one verification; the next attempt needs a new one.
+      if (widget.current) window.turnstile?.reset(widget.current);
+      setToken("");
     }
   }
 
@@ -103,6 +145,40 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
             )}
           </label>
 
+          {register && (
+            <label className="flex items-start gap-2.5 text-xs leading-relaxed text-muted">
+              <input
+                type="checkbox"
+                required
+                checked={consent}
+                onChange={(e) => setConsent(e.target.checked)}
+                className="mt-0.5 size-4 shrink-0 accent-accent"
+              />
+              <span>
+                I&apos;m 18 or older and agree to the{" "}
+                <Link href="/terms" target="_blank" className="font-medium text-accent underline-offset-2 hover:underline">
+                  Terms
+                </Link>
+                . I consent to Overturn processing my documents, including health information, as
+                the{" "}
+                <Link href="/privacy" target="_blank" className="font-medium text-accent underline-offset-2 hover:underline">
+                  Privacy Policy
+                </Link>{" "}
+                describes.
+              </span>
+            </label>
+          )}
+
+          {SITE_KEY && (
+            <>
+              <Script
+                src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
+                onReady={renderWidget}
+              />
+              <div ref={box} className="min-h-[65px]" />
+            </>
+          )}
+
           {error && (
             <div role="alert" className="rounded-xl bg-accent-soft px-3 py-2 text-sm text-accent shadow-neu-inset-sm">
               <p>{error.message}</p>
@@ -120,7 +196,7 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
 
           <button
             type="submit"
-            disabled={busy}
+            disabled={busy || (!!SITE_KEY && !token)}
             className="w-full rounded-xl bg-accent px-4 py-2.5 font-medium text-accent-ink shadow-neu-sm transition active:shadow-neu-inset-sm disabled:opacity-50"
           >
             {busy ? "…" : register ? "Create account" : "Sign in"}
@@ -136,6 +212,15 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
           >
             {register ? "Sign in" : "Create one"}
           </button>
+        </p>
+        <p className="mt-4 text-xs text-muted">
+          <Link href="/privacy" className="underline-offset-2 hover:underline">
+            Privacy
+          </Link>{" "}
+          ·{" "}
+          <Link href="/terms" className="underline-offset-2 hover:underline">
+            Terms
+          </Link>
         </p>
       </div>
     </main>

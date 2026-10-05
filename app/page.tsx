@@ -45,7 +45,15 @@ export default function Home() {
       </div>
 
       <p className="mt-10 text-xs text-muted">
-        Information from your documents and IRDAI&apos;s rules, not legal or medical advice.
+        Information from your documents and IRDAI&apos;s rules, not legal or medical advice.{" "}
+        ·{" "}
+        <Link href="/privacy" className="underline-offset-2 hover:underline">
+          Privacy
+        </Link>{" "}
+        ·{" "}
+        <Link href="/terms" className="underline-offset-2 hover:underline">
+          Terms
+        </Link>
       </p>
     </main>
   );

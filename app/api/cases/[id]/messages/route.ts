@@ -10,7 +10,7 @@ import {
   listMessages,
   setCaseTitle,
 } from "@/lib/db/queries";
-import { assertWithinDailyLimit, recordUsage } from "@/lib/limits";
+import { assertWithinDailyLimit, rateLimit, recordUsage } from "@/lib/limits";
 import { badRequest, notFound, route } from "@/lib/http";
 import { reviewCase, type Turn } from "@/lib/agent";
 import { titleFor } from "@/lib/rag/rewrite";
@@ -42,6 +42,8 @@ export const POST = route(async (req: Request, ctx: Ctx) => {
   const { question, review } = parsed.data;
 
   await assertWithinDailyLimit(userId);
+  // The daily cap bounds cost; this bounds bursts (a review is several model calls).
+  await rateLimit(`messages:user:${userId}`, 6, 60);
 
   const history: Turn[] = (await listMessages(userId, id)).map((m) => ({
     role: m.role as "user" | "assistant",

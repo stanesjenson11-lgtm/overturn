@@ -12,6 +12,7 @@ import {
   listCases,
 } from "@/lib/db/queries";
 import { ingest } from "@/lib/ingest";
+import { CONSENT_VERSION } from "@/lib/legal";
 import { writeFixtures } from "./fixtures";
 
 /**
@@ -24,6 +25,7 @@ import { writeFixtures } from "./fixtures";
  */
 required("DATABASE_URL");
 required("GOOGLE_API_KEY");
+required("DATA_KEY");
 
 const [email = "demo@overturn.app", password = "overturn-demo-password"] = process.argv.slice(2);
 const DEMO = "Shield Health: heart treatment claim";
@@ -31,7 +33,8 @@ const DEMO = "Shield Health: heart treatment claim";
 await applySchema();
 
 const user =
-  (await findUserByEmail(email)) ?? (await createUser(email, await hashPassword(password)));
+  (await findUserByEmail(email)) ??
+  (await createUser(email, await hashPassword(password), CONSENT_VERSION));
 console.log(`user ${user.email}`);
 
 if ((await listCases(user.id)).some((c) => c.title === DEMO)) {

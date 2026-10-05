@@ -12,6 +12,12 @@ CREATE TABLE IF NOT EXISTS users (
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 
+-- What the user agreed to and when (DPDP Act s.6: consent must be provable).
+-- The version names the privacy notice they saw, so a later change to the
+-- notice can tell who agreed to which.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS consented_at    timestamptz;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_version text;
+
 -- A case is one rejected claim: the documents that explain it and the
 -- conversation about it.
 CREATE TABLE IF NOT EXISTS cases (
@@ -103,6 +109,28 @@ CREATE TABLE IF NOT EXISTS reg_chunks (
   content      text NOT NULL,
   embedding    vector(768) NOT NULL,
   tsv          tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED
+);
+
+-- Fixed-window request counters, keyed by what is being limited
+-- ("login:ip:…", "upload:user:…"). Not a tenant table: nothing here is ever
+-- shown to anyone.
+CREATE TABLE IF NOT EXISTS rate_limits (
+  key          text        NOT NULL,
+  window_start timestamptz NOT NULL,
+  count        int         NOT NULL DEFAULT 1,
+  PRIMARY KEY (key, window_start)
+);
+
+-- Sign-ins, sign-ups, exports and account deletions, kept a year (DPDP Rules
+-- 2025, rule 6: logs to detect and investigate unauthorised access). No foreign
+-- key to users on purpose: the record that an account was deleted has to
+-- outlive the account. Written by routes; read by nobody but an investigation.
+CREATE TABLE IF NOT EXISTS security_log (
+  id      bigserial PRIMARY KEY,
+  at      timestamptz NOT NULL DEFAULT now(),
+  event   text NOT NULL,
+  user_id uuid,
+  ip      text
 );
 
 CREATE INDEX IF NOT EXISTS chunks_tenant_idx  ON chunks (user_id, document_id);

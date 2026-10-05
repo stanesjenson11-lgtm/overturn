@@ -12,7 +12,7 @@ import {
 import { ingest } from "@/lib/ingest";
 import { MAX_DOCS_PER_USER, toPdf } from "@/lib/ingest/pdf";
 import { badRequest, json, notFound, route } from "@/lib/http";
-import { assertWithinDailyLimit } from "@/lib/limits";
+import { assertWithinDailyLimit, rateLimit } from "@/lib/limits";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -40,6 +40,7 @@ export const POST = route(async (req: Request) => {
     throw badRequest(`You can keep ${MAX_DOCS_PER_USER} documents. Delete one to upload another.`);
   // Reading a scan and pulling key terms spend model tokens; same cap as questions.
   await assertWithinDailyLimit(userId);
+  await rateLimit(`upload:user:${userId}`, 20, 60 * 60);
 
   const form = await req.formData();
   const file = form.get("file");
@@ -61,7 +62,9 @@ export const POST = route(async (req: Request) => {
   // before anything is parsed.
   const bytes = await toPdf(new Uint8Array(await file.arrayBuffer()));
 
-  const doc = await createDocument(userId, caseId, kind as DocKind, file.name);
+  // Shown back in the UI and the chat export: no control characters, bounded.
+  const filename = file.name.replace(/\p{Cc}/gu, "").trim().slice(0, 200) || "document";
+  const doc = await createDocument(userId, caseId, kind as DocKind, filename);
 
   // after() keeps the invocation alive past the response, so the client gets an
   // id to poll immediately instead of holding a request open for 30 seconds.
