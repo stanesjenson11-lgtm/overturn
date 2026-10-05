@@ -28,6 +28,7 @@ const TERM_SETS = {
     labels: {
       insurer: "Insurer",
       claim_number: "Claim no.",
+      policy_number: "Policy no.",
       letter_date: "Letter dated",
       admission_date: "Admitted",
       amount_claimed: "Claimed",
@@ -36,7 +37,7 @@ const TERM_SETS = {
       clauses_cited: "Clauses cited",
     },
     describe:
-      "an insurer's letter rejecting (repudiating) a health insurance claim. Fields: insurer = the insurer's name; claim_number = the claim number; letter_date = the date of the letter; admission_date = the date of admission; amount_claimed = the amount claimed; amount_disallowed = the amount rejected or not payable; reason = the reason the letter gives, in its own words; clauses_cited = the policy clause numbers the letter relies on.",
+      "an insurer's letter rejecting (repudiating) a health insurance claim. Fields: insurer = the insurer's name; claim_number = the claim number; policy_number = the policy number; letter_date = the date of the letter; admission_date = the date of admission; amount_claimed = the amount claimed; amount_disallowed = the amount rejected or not payable; reason = the reason the letter gives, in its own words; clauses_cited = the policy clause numbers the letter relies on.",
   },
 } as const;
 

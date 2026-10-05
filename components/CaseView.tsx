@@ -201,6 +201,7 @@ export default function CaseView({ caseId }: { caseId: string }) {
   const ready = docs.some((d) => d.status === "ready");
   const has = (kind: DocKind) => docs.some((d) => d.kind === kind && d.status === "ready");
   const reviewable = has("policy") && has("rejection");
+  const latestVerdict = messages.filter((m) => m.meta?.verdict).at(-1);
   const terms = docs.find((d) => d.kind === "policy")?.key_terms ?? [];
   const letter = docs.find((d) => d.kind === "rejection")?.key_terms ?? [];
 
@@ -368,6 +369,15 @@ export default function CaseView({ caseId }: { caseId: string }) {
                 <div className="min-w-0 flex-1">
                   {m.meta?.verdict && <VerdictBadge verdict={m.meta.verdict.verdict} />}
                   <AnswerText content={m.content} citations={m.citations} />
+                  {/* The appeal is built from the latest verdict, so only that one offers it. */}
+                  {m.id === latestVerdict?.id && latestVerdict.meta?.verdict?.verdict === "challengeable" && (
+                    <a
+                      href={`/api/cases/${caseId}/appeal`}
+                      className="mt-4 inline-block rounded-xl bg-accent px-4 py-2.5 text-sm font-medium text-accent-ink shadow-neu-sm transition active:shadow-neu-inset-sm"
+                    >
+                      Download the appeal letter (PDF)
+                    </a>
+                  )}
                   {/* Only the latest message's questions are still open. */}
                   {m.meta?.questionnaire && m === messages.at(-1) && !streaming && (
                     <QuestionnaireForm questionnaire={m.meta.questionnaire} onSubmit={(t) => void ask(t)} />

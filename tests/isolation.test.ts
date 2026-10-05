@@ -6,6 +6,7 @@ import { GET as getDoc, DELETE as deleteDoc } from "@/app/api/documents/[id]/rou
 import { GET as listCasesRoute, POST as newCase } from "@/app/api/cases/route";
 import { GET as getCaseRoute, DELETE as deleteCaseRoute } from "@/app/api/cases/[id]/route";
 import { POST as ask } from "@/app/api/cases/[id]/messages/route";
+import { GET as appeal } from "@/app/api/cases/[id]/appeal/route";
 import { GET as admin } from "@/app/api/admin/route";
 import {
   createCase,
@@ -155,6 +156,14 @@ describe("user B, holding user A's ids", () => {
     );
     expect((await listCaseDocuments(A.id, A.caseId)).length).toBe(1);
     expect((await listMessages(A.id, A.caseId)).length).toBe(1);
+  });
+
+  it("cannot download an appeal letter built from A's case", async () => {
+    const res = await appeal(get(`/api/cases/${A.caseId}/appeal`, B.cookie), ctx(A.caseId));
+    expect(res.status).toBe(404);
+    // And A gets a refusal, not an empty letter, until a verdict says challengeable.
+    const own = await appeal(get(`/api/cases/${A.caseId}/appeal`, A.cookie), ctx(A.caseId));
+    expect(own.status).toBe(400);
   });
 
   it("cannot file a document into A's case", async () => {

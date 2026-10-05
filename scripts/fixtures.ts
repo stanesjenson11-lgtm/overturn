@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { PDFDocument, StandardFonts } from "pdf-lib";
+import { renderPdf } from "@/lib/letter";
 
 /**
  * Synthetic documents, generated rather than committed. Never ship a real
@@ -181,42 +181,8 @@ const FIXTURES = {
 
 export type FixtureName = keyof typeof FIXTURES;
 
-/** Renders text to a real PDF: line wrapping, page breaks, an actual text layer. */
-export async function renderPdf(text: string): Promise<Uint8Array> {
-  const pdf = await PDFDocument.create();
-  const font = await pdf.embedFont(StandardFonts.TimesRoman);
-  const [size, leading, margin, width, height] = [11, 15.5, 56, 595, 842]; // A4 points
-
-  let page = pdf.addPage([width, height]);
-  let y = height - margin;
-
-  const lineFor = (paragraph: string) => {
-    const lines: string[] = [];
-    let current = "";
-    for (const word of paragraph.split(" ")) {
-      const next = current ? `${current} ${word}` : word;
-      if (font.widthOfTextAtSize(next, size) > width - margin * 2) {
-        lines.push(current);
-        current = word;
-      } else current = next;
-    }
-    if (current) lines.push(current);
-    return lines;
-  };
-
-  for (const paragraph of text.split("\n")) {
-    for (const line of paragraph ? lineFor(paragraph) : [""]) {
-      if (y < margin) {
-        page = pdf.addPage([width, height]);
-        y = height - margin;
-      }
-      if (line) page.drawText(line, { x: margin, y, size, font });
-      y -= leading;
-    }
-  }
-
-  return pdf.save();
-}
+// The renderer lives in lib/letter.ts, where the appeal letter needs it too.
+export { renderPdf };
 
 export async function writeFixtures(dir: string): Promise<Record<FixtureName, string>> {
   mkdirSync(dir, { recursive: true });
