@@ -140,7 +140,7 @@ describe("the pipeline", () => {
     expect(events.filter((e) => e.type === "text").length).toBeGreaterThan(1);
 
     const citations = events.find((e) => e.type === "citations");
-    expect(citations.citations[0]).toMatchObject({ id: 1, pageStart: 6 });
+    expect(citations.citations[0]).toMatchObject({ id: "1", pageStart: 6 });
 
     const done = events.at(-1);
     expect(done.type).toBe("done");
@@ -174,7 +174,7 @@ describe("the pipeline", () => {
   it("drops only the citations the answer never referenced", async () => {
     setGenAI(fakeGemini({ answer: "Only the first clause matters [1]." }));
     const done = (await run()).at(-1);
-    expect(done.citations.map((c: any) => c.id)).toEqual([1]);
+    expect(done.citations.map((c: any) => c.id)).toEqual(["1"]);
   });
 
   it("reports a refusal instead of persisting the content blocks", async () => {

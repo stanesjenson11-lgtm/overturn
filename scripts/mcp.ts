@@ -3,17 +3,17 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import "./env";
 import { required } from "./env";
-import { findUserByEmail, listDocuments } from "@/lib/db/queries";
+import { reviewCase } from "@/lib/agent";
+import { findUserByEmail, listCaseDocuments, listCases } from "@/lib/db/queries";
 import { assertWithinDailyLimit, recordUsage } from "@/lib/limits";
-import { answerQuestion } from "@/lib/rag/pipeline";
 import type { Citation } from "@/lib/rag/types";
 
 /**
- * LeaseLens as an MCP server, so Claude Desktop (or any MCP client) can ask a
- * lease questions and get the same cited answers the web app gives.
+ * Overturn as an MCP server, so Claude Desktop (or any MCP client) can review
+ * a rejected claim and get the same cited verdict the web app gives.
  *
- * The third consumer of answerQuestion(), after the SSE route and the eval
- * harness. It drains the same generator; there is no second pipeline.
+ * It drains the same reviewCase() generator as the SSE route and the eval:
+ * there is no second agent.
  *
  * Identity is the account named on the command line, the same trust model as
  * `npm run eval`: whoever can run this already holds DATABASE_URL. The daily
@@ -30,7 +30,7 @@ console.log = console.error;
 required("DATABASE_URL");
 required("GOOGLE_API_KEY");
 
-const EMAIL = process.argv[2] ?? "demo@leaselens.app";
+const EMAIL = process.argv[2] ?? "demo@overturn.app";
 const user = await findUserByEmail(EMAIL);
 if (!user) throw new Error(`No account for ${EMAIL}. Register in the app, or run: npm run seed`);
 
@@ -41,53 +41,60 @@ const text = (t: string, isError = false) => ({
 
 const cite = (c: Citation) => {
   const pages = c.pageEnd !== c.pageStart ? `pp.${c.pageStart}-${c.pageEnd}` : `p.${c.pageStart}`;
+  const where = c.source === "regulation" ? `${c.document ?? "IRDAI"}, ${c.heading ?? "clause"}` : c.heading ?? "Clause";
   const quote = c.text.replace(/\s+/g, " ");
-  return `[${c.id}] ${c.heading ?? "Clause"}, ${pages}: "${quote.slice(0, 300)}${quote.length > 300 ? "…" : ""}"`;
+  return `[${c.id}] ${where}, ${pages}: "${quote.slice(0, 300)}${quote.length > 300 ? "…" : ""}"`;
 };
 
-const server = new McpServer({ name: "leaselens", version: "1.0.0" });
+const server = new McpServer({ name: "overturn", version: "1.0.0" });
 
 server.registerTool(
-  "list_documents",
+  "list_cases",
   {
-    title: "List leases",
+    title: "List cases",
     description:
-      "The leases on this LeaseLens account, with their key terms (rent, deposit, notice and so on) and the page each one comes from.",
+      "The rejected claims on this Overturn account, with what each rejection letter says (claim number, reason, clauses cited) and the documents uploaded.",
   },
   async () => {
-    const docs = await listDocuments(user.id);
-    if (!docs.length) return text("No documents uploaded yet.");
-    return text(
-      docs
-        .map((d) =>
-          [
-            `${d.filename} (${d.status}${d.page_count ? `, ${d.page_count} pages` : ""})`,
-            ...(d.key_terms ?? []).map((t) => `  ${t.label}: ${t.value} (p.${t.page})`),
-          ].join("\n"),
-        )
-        .join("\n\n"),
+    const cases = await listCases(user.id);
+    if (!cases.length) return text("No cases yet.");
+    const blocks = await Promise.all(
+      cases.map(async (c) => {
+        const docs = await listCaseDocuments(user.id, c.id);
+        return [
+          `${c.title ?? "Untitled case"} (id ${c.id})`,
+          ...docs.map((d) => `  ${d.kind}: ${d.filename} (${d.status})`),
+          ...(docs.find((d) => d.kind === "rejection")?.key_terms ?? []).map(
+            (t) => `    ${t.label}: ${t.value} (p.${t.page})`,
+          ),
+        ].join("\n");
+      }),
     );
+    return text(blocks.join("\n\n"));
   },
 );
 
 server.registerTool(
-  "ask_lease",
+  "review_case",
   {
-    title: "Ask a lease",
+    title: "Review a rejected claim",
     description:
-      "Answers a question from one lease, citing its clauses by page. Says plainly when the lease doesn't cover something instead of guessing. Get filenames from list_documents.",
+      "Checks a rejection against the policy, IRDAI's rules and deterministic rule checks, and returns a verdict (challengeable, valid or needs more information) with every point cited. Pass a question to ask about one thing instead of a full review.",
     inputSchema: {
-      document: z.string().describe("A filename from list_documents, e.g. maple-court.pdf"),
-      question: z.string().trim().min(3).max(2000),
+      case: z.string().describe("A case id, or part of its title, from list_cases"),
+      question: z.string().trim().min(3).max(2000).optional(),
     },
   },
-  async ({ document, question }) => {
-    const want = document.replace(/\.pdf$/i, "").toLowerCase();
-    const doc = (await listDocuments(user.id)).find(
-      (d) => d.id === document || d.filename.replace(/\.pdf$/i, "").toLowerCase() === want,
+  async ({ case: wanted, question }) => {
+    const needle = wanted.toLowerCase();
+    const found = (await listCases(user.id)).find(
+      (c) => c.id === wanted || (c.title ?? "").toLowerCase().includes(needle),
     );
-    if (!doc) return text(`No document called "${document}". Use list_documents for the filenames.`, true);
-    if (doc.status !== "ready") return text(`${doc.filename} is still ${doc.status}.`, true);
+    if (!found) return text(`No case matching "${wanted}". Use list_cases.`, true);
+
+    const ready = (await listCaseDocuments(user.id, found.id)).filter((d) => d.status === "ready");
+    if (!ready.length) return text("That case has no processed documents yet.", true);
+    const termsOf = (kind: string) => ready.find((d) => d.kind === kind)?.key_terms ?? [];
 
     try {
       await assertWithinDailyLimit(user.id);
@@ -95,19 +102,24 @@ server.registerTool(
       return text((e as Error).message, true);
     }
 
-    for await (const event of answerQuestion({
+    for await (const event of reviewCase({
       userId: user.id,
-      documentIds: [doc.id],
-      question,
+      documentIds: ready.map((d) => d.id),
+      question: question ?? "Review this rejection: does the reason the insurer gave hold up?",
       history: [],
+      facts: { letter: termsOf("rejection"), policy: termsOf("policy") },
     })) {
       if (event.type === "error") return text(event.message, true);
       if (event.type === "done") {
         await recordUsage(user.id, event.usage);
-        return text([event.content, "", ...event.citations.map(cite)].join("\n").trim());
+        const head = event.verdict ? `VERDICT: ${event.verdict.verdict.replace("_", " ")}\n\n` : "";
+        const asks = event.questionnaire
+          ? `\n\nTo decide, the agent needs:\n${event.questionnaire.questions.map((q) => `- ${q.text}`).join("\n")}`
+          : "";
+        return text([`${head}${event.content}${asks}`, "", ...event.citations.map(cite)].join("\n").trim());
       }
     }
-    return text("The pipeline ended without an answer.", true);
+    return text("The review ended without a result.", true);
   },
 );
 

@@ -7,6 +7,15 @@ import { GoogleGenAI } from "@google/genai";
 export const ANSWER_MODEL = "gemini-3.7-flash";
 export const UTILITY_MODEL = "gemini-3.1-flash-lite";
 
+/**
+ * The agent loop's model. One review spends four to six calls, and the free
+ * tier allows the answer model only 5 a minute, so a single review would
+ * exhaust it. The lite model's allowance is far higher. The legal reasoning
+ * is carried by the rules engine and the retrieved text, not by the model's
+ * own knowledge; the eval measures whether that holds.
+ */
+export const AGENT_MODEL = UTILITY_MODEL;
+
 let client: GoogleGenAI | undefined;
 
 export function genAI(): GoogleGenAI {

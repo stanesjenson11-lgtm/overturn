@@ -153,7 +153,7 @@ export async function* answerQuestion(opts: {
     // Only chips the answer actually referenced. An unused clause in the
     // sidebar reads as a claim the answer never made.
     const cited = new Set(
-      [...content.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])),
+      [...content.matchAll(/\[(\d+)\]/g)].map((m) => m[1]),
     );
     const used = citations.filter((c) => cited.has(c.id));
 

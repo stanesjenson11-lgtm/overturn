@@ -381,16 +381,19 @@ export type Message = {
   role: string;
   content: string;
   citations: unknown;
+  meta: unknown;
   created_at: string;
 };
 
 export async function listMessages(userId: string, caseId: string) {
   return tq<Message>(
-    `SELECT id::text AS id, role, content, citations, created_at
+    `SELECT id::text AS id, role, content, citations, meta, created_at
        FROM messages WHERE user_id = $1 AND case_id = $2 ORDER BY id`,
     [userId, caseId],
   );
 }
+
+const asJson = (v: unknown) => (v == null ? null : JSON.stringify(v));
 
 export async function insertMessage(
   userId: string,
@@ -398,11 +401,12 @@ export async function insertMessage(
   role: "user" | "assistant",
   content: string,
   citations: unknown = null,
+  meta: unknown = null,
 ) {
   const [m] = await tq<{ id: string }>(
-    `INSERT INTO messages (user_id, case_id, role, content, citations)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id::text AS id`,
-    [userId, caseId, role, content, citations === null ? null : JSON.stringify(citations)],
+    `INSERT INTO messages (user_id, case_id, role, content, citations, meta)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id::text AS id`,
+    [userId, caseId, role, content, asJson(citations), asJson(meta)],
   );
   return m;
 }

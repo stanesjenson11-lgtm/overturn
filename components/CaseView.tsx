@@ -1,20 +1,120 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { api, type Case, type Citation, type Doc, type DocKind, type KeyTerm, type Msg } from "@/lib/client";
+import {
+  api,
+  type Case,
+  type Citation,
+  type Doc,
+  type DocKind,
+  type KeyTerm,
+  type Msg,
+  type Questionnaire,
+  type Verdict,
+} from "@/lib/client";
 import { AnswerText } from "./CitationChip";
 import { DeleteButton, REFRESH } from "./Sidebar";
 import UploadDropzone from "./UploadDropzone";
 
+/** The agent's tool calls, as the user watches them happen. */
 const STAGE_LABEL: Record<string, string> = {
-  rewrite: "reading the conversation",
-  retrieve: "searching your documents",
-  gate: "checking the question is about this claim",
-  rerank: "ranking clauses",
-  grade: "checking the clauses answer it",
-  retry: "widening the search",
+  start: "reading the rejection",
+  search_policy: "searching your documents",
+  search_regulations: "checking IRDAI's rules",
+  check_rules: "running the rule checks",
+  ask_questionnaire: "preparing a few questions",
+  record_verdict: "writing the verdict",
   answer: "writing",
 };
+
+const REVIEW = "Review this rejection: does the reason the insurer gave hold up?";
+
+const VERDICT_LABEL: Record<Verdict["verdict"], string> = {
+  challengeable: "Likely challengeable",
+  valid: "The rejection looks valid",
+  needs_info: "Needs more information",
+};
+
+function VerdictBadge({ verdict }: { verdict: Verdict["verdict"] }) {
+  return (
+    <p
+      className={`mb-3 inline-block rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+        verdict === "challengeable"
+          ? "bg-accent text-accent-ink shadow-neu-sm"
+          : "text-muted shadow-neu-inset-sm"
+      }`}
+    >
+      {VERDICT_LABEL[verdict]}
+    </p>
+  );
+}
+
+/**
+ * The agent's questions as a form. Dates use the browser's own date input, so
+ * they come back as YYYY-MM-DD, the format the rule checks take, with no
+ * day/month ambiguity to misread. Answers go back as an ordinary message, so
+ * the agent needs no special case to read them.
+ */
+function QuestionnaireForm({
+  questionnaire,
+  onSubmit,
+}: {
+  questionnaire: Questionnaire;
+  onSubmit: (text: string) => void;
+}) {
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const set = (id: string, v: string) => setAnswers((a) => ({ ...a, [id]: v }));
+  const complete = questionnaire.questions.every((q) => answers[q.id]?.trim());
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmit(
+          ["My answers:", ...questionnaire.questions.map((q) => `- ${q.text} ${answers[q.id]}`)].join("\n"),
+        );
+      }}
+      className="mt-4 space-y-4 rounded-2xl p-5 shadow-neu-sm"
+    >
+      {questionnaire.questions.map((q) => (
+        <fieldset key={q.id}>
+          <legend className="mb-2 text-sm">{q.text}</legend>
+          {q.type === "choice" ? (
+            <div className="flex flex-wrap gap-2">
+              {q.options!.map((o) => (
+                <button
+                  key={o}
+                  type="button"
+                  aria-pressed={answers[q.id] === o}
+                  onClick={() => set(q.id, o)}
+                  className={`rounded-full px-3 py-1.5 text-sm transition ${
+                    answers[q.id] === o ? "bg-accent text-accent-ink shadow-neu-inset-sm" : "shadow-neu-sm"
+                  }`}
+                >
+                  {o}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <input
+              type={q.type === "date" ? "date" : "text"}
+              value={answers[q.id] ?? ""}
+              onChange={(e) => set(q.id, e.target.value)}
+              className="w-full rounded-xl px-3 py-2 text-sm text-ink shadow-neu-inset outline-none"
+            />
+          )}
+        </fieldset>
+      ))}
+      <button
+        type="submit"
+        disabled={!complete}
+        className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-accent-ink shadow-neu-sm transition active:shadow-neu-inset-sm disabled:opacity-40"
+      >
+        Send answers
+      </button>
+    </form>
+  );
+}
 
 const STATUS: Record<string, string> = {
   pending: "queued",
@@ -68,8 +168,6 @@ export default function CaseView({ caseId }: { caseId: string }) {
   const [question, setQuestion] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
-  const [citations, setCitations] = useState<Citation[]>([]);
   const [error, setError] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
 
@@ -98,9 +196,11 @@ export default function CaseView({ caseId }: { caseId: string }) {
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, draft, stage]);
+  }, [messages, stage]);
 
   const ready = docs.some((d) => d.status === "ready");
+  const has = (kind: DocKind) => docs.some((d) => d.kind === kind && d.status === "ready");
+  const reviewable = has("policy") && has("rejection");
   const terms = docs.find((d) => d.kind === "policy")?.key_terms ?? [];
   const letter = docs.find((d) => d.kind === "rejection")?.key_terms ?? [];
 
@@ -114,9 +214,7 @@ export default function CaseView({ caseId }: { caseId: string }) {
     setQuestion("");
     setError(null);
     setStreaming(true);
-    setStage(STAGE_LABEL.retrieve);
-    setDraft("");
-    setCitations([]);
+    setStage(STAGE_LABEL.start);
     setMessages((m) => [
       ...m,
       { id: `local-${Date.now()}`, role: "user", content: text, citations: null },
@@ -138,8 +236,7 @@ export default function CaseView({ caseId }: { caseId: string }) {
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let answer = "";
-      let cites: Citation[] = [];
+      let reply: Msg | null = null;
 
       for (;;) {
         const { done, value } = await reader.read();
@@ -154,32 +251,28 @@ export default function CaseView({ caseId }: { caseId: string }) {
           if (!frame.startsWith("data: ")) continue;
           const event = JSON.parse(frame.slice(6));
 
+          // The agent streams what it's doing, step by step, and the answer
+          // arrives whole once it has decided.
           if (event.type === "stage") setStage(STAGE_LABEL[event.stage] ?? event.stage);
-          else if (event.type === "citations") {
-            cites = event.citations;
-            setCitations(cites);
-          } else if (event.type === "text") {
-            answer += event.text;
-            setDraft(answer);
-          } else if (event.type === "error") throw new Error(event.message);
-          else if (event.type === "done") {
-            answer = event.content;
-            cites = event.citations;
-          }
+          else if (event.type === "error") throw new Error(event.message);
+          else if (event.type === "done")
+            reply = {
+              id: `local-a-${Date.now()}`,
+              role: "assistant",
+              content: event.content,
+              citations: event.citations as Citation[],
+              meta: { verdict: event.verdict, questionnaire: event.questionnaire },
+            };
         }
       }
 
-      setMessages((m) => [
-        ...m,
-        { id: `local-a-${Date.now()}`, role: "assistant", content: answer, citations: cites },
-      ]);
+      if (reply) setMessages((m) => [...m, reply!]);
       window.dispatchEvent(new Event(REFRESH));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
       setStreaming(false);
       setStage(null);
-      setDraft("");
     }
   }
 
@@ -226,7 +319,16 @@ export default function CaseView({ caseId }: { caseId: string }) {
             <TermsCard title="Your policy at a glance" terms={terms} />
             {ready ? (
               <>
-                <p className="mt-4 text-muted">Try one of these:</p>
+                {reviewable && (
+                  <button
+                    type="button"
+                    onClick={() => void ask(REVIEW)}
+                    className="mt-6 rounded-xl bg-accent px-5 py-3 text-sm font-medium text-accent-ink shadow-neu-sm transition active:shadow-neu-inset-sm"
+                  >
+                    Review this rejection
+                  </button>
+                )}
+                <p className="mt-6 text-muted">Or ask something specific:</p>
                 <ul className="mt-4 space-y-3">
                   {SUGGESTIONS.map((s) => (
                     <li key={s}>
@@ -264,7 +366,12 @@ export default function CaseView({ caseId }: { caseId: string }) {
                   OT
                 </span>
                 <div className="min-w-0 flex-1">
+                  {m.meta?.verdict && <VerdictBadge verdict={m.meta.verdict.verdict} />}
                   <AnswerText content={m.content} citations={m.citations} />
+                  {/* Only the latest message's questions are still open. */}
+                  {m.meta?.questionnaire && m === messages.at(-1) && !streaming && (
+                    <QuestionnaireForm questionnaire={m.meta.questionnaire} onSubmit={(t) => void ask(t)} />
+                  )}
                 </div>
               </li>
             ),
@@ -275,16 +382,10 @@ export default function CaseView({ caseId }: { caseId: string }) {
               <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-accent shadow-neu-inset-sm">
                 OT
               </span>
-              <div className="min-w-0 flex-1">
-                {draft ? (
-                  <AnswerText content={draft} citations={citations} />
-                ) : (
-                  <p className="flex items-center gap-2 text-sm text-muted">
-                    <span className="size-1.5 animate-pulse rounded-full bg-accent" />
-                    {stage}…
-                  </p>
-                )}
-              </div>
+              <p className="flex min-w-0 flex-1 items-center gap-2 text-sm text-muted">
+                <span className="size-1.5 animate-pulse rounded-full bg-accent" />
+                {stage}…
+              </p>
             </li>
           )}
         </ol>

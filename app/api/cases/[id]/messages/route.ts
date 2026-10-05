@@ -11,7 +11,7 @@ import {
 } from "@/lib/db/queries";
 import { assertWithinDailyLimit, recordUsage } from "@/lib/limits";
 import { badRequest, notFound, route } from "@/lib/http";
-import { answerQuestion, type Turn } from "@/lib/rag/pipeline";
+import { reviewCase, type Turn } from "@/lib/agent";
 import { titleFor } from "@/lib/rag/rewrite";
 
 export const runtime = "nodejs";
@@ -27,10 +27,11 @@ export const POST = route(async (req: Request, ctx: Ctx) => {
 
   const found = await getCase(userId, id);
   if (!found) throw notFound();
-  const documentIds = (await listCaseDocuments(userId, id))
-    .filter((d) => d.status === "ready")
-    .map((d) => d.id);
-  if (!documentIds.length) throw badRequest("Upload the policy and the rejection letter first.");
+  const ready = (await listCaseDocuments(userId, id)).filter((d) => d.status === "ready");
+  if (!ready.length) throw badRequest("Upload the policy and the rejection letter first.");
+  const documentIds = ready.map((d) => d.id);
+  const termsOf = (kind: string) => ready.find((d) => d.kind === kind)?.key_terms ?? [];
+  const facts = { letter: termsOf("rejection"), policy: termsOf("policy") };
 
   const parsed = Body.safeParse(await req.json());
   if (!parsed.success) throw badRequest("Ask a question of at least a few words.");
@@ -44,7 +45,15 @@ export const POST = route(async (req: Request, ctx: Ctx) => {
   }));
 
   await insertMessage(userId, id, "user", question);
-  if (!found.title) after(async () => setCaseTitle(userId, id, await titleFor(question)));
+  if (!found.title) {
+    // A case is a claim, so the letter names it better than the first question
+    // does ("Review this rejection" titles every case the same).
+    const [insurer, claim] = ["insurer", "claim_number"].map(
+      (f) => facts.letter.find((t) => t.field === f)?.value,
+    );
+    if (insurer || claim) await setCaseTitle(userId, id, [insurer, claim].filter(Boolean).join(" · "));
+    else after(async () => setCaseTitle(userId, id, await titleFor(question)));
+  }
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -53,18 +62,17 @@ export const POST = route(async (req: Request, ctx: Ctx) => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
 
       try {
-        for await (const event of answerQuestion({
-          userId,
-          documentIds,
-          question,
-          history,
-        })) {
+        for await (const event of reviewCase({ userId, documentIds, question, history, facts })) {
           send(event);
 
           if (event.type === "done") {
             // Persist inside the stream, not after it: once the response
             // closes on a serverless runtime there is no "later".
-            await insertMessage(userId, id, "assistant", event.content, event.citations);
+            const meta =
+              event.verdict || event.questionnaire
+                ? { verdict: event.verdict, questionnaire: event.questionnaire }
+                : null;
+            await insertMessage(userId, id, "assistant", event.content, event.citations, meta);
             await recordUsage(userId, event.usage);
             await insertTrace(userId, id, event.spans);
           }

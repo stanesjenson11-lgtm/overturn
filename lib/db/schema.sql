@@ -65,6 +65,11 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- The agent's structured output beside its prose: a verdict, or the
+-- questionnaire it is waiting on. ALTER rather than in the CREATE so an
+-- existing database picks it up on its next migrate.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS meta jsonb;
+
 CREATE TABLE IF NOT EXISTS usage (
   user_id    uuid NOT NULL REFERENCES users ON DELETE CASCADE,
   day        date NOT NULL,

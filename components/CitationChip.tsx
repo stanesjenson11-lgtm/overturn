@@ -13,6 +13,7 @@ import type { Citation } from "@/lib/client";
  */
 export function CitationChip({ citation }: { citation: Citation }) {
   const [open, setOpen] = useState(false);
+  const regulation = citation.source === "regulation";
   const pages =
     citation.pageStart === citation.pageEnd
       ? `p. ${citation.pageStart}`
@@ -24,8 +25,12 @@ export function CitationChip({ citation }: { citation: Citation }) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        title={`${citation.heading ?? "Clause"} · ${pages}`}
-        className="mx-0.5 rounded-full bg-accent px-1.5 py-0.5 align-super text-[0.7em] font-semibold text-accent-ink transition hover:brightness-105"
+        title={`${citation.document ?? "Your documents"} · ${citation.heading ?? "Clause"} · ${pages}`}
+        className={`mx-0.5 rounded-full px-1.5 py-0.5 align-super text-[0.7em] font-semibold transition hover:brightness-105 ${
+          // Filled for the user's own documents, outlined for the regulator:
+          // "your policy says" and "the rules say" read differently at a glance.
+          regulation ? "text-accent ring-1 ring-accent" : "bg-accent text-accent-ink"
+        }`}
       >
         {citation.id}
       </button>
@@ -34,6 +39,7 @@ export function CitationChip({ citation }: { citation: Citation }) {
         <span className="absolute bottom-full left-0 z-20 mb-2 block w-[min(30rem,80vw)] rounded-2xl p-4 text-left shadow-neu">
           <span className="flex items-baseline justify-between gap-4 border-b border-line pb-2">
             <span className="font-sans text-xs font-medium uppercase tracking-wide text-muted">
+              {regulation ? `${citation.document ?? "IRDAI"} · ` : ""}
               {citation.heading ?? "Clause"}
             </span>
             <span className="shrink-0 font-sans text-xs text-muted">{pages}</span>
@@ -47,7 +53,7 @@ export function CitationChip({ citation }: { citation: Citation }) {
   );
 }
 
-/** Renders an answer, turning every `[n]` marker into its chip. */
+/** Renders an answer, turning every `[P1]` / `[R1]` marker into its chip. */
 export function AnswerText({
   content,
   citations,
@@ -61,9 +67,9 @@ export function AnswerText({
     <div className="prose-lease">
       {content.split(/\n{2,}/).map((para, p) => (
         <p key={p} className={p ? "mt-[0.85em]" : ""}>
-          {para.split(/(\[\d+\])/).map((piece, i) => {
-            const m = /^\[(\d+)\]$/.exec(piece);
-            const citation = m ? byId.get(Number(m[1])) : undefined;
+          {para.split(/(\[[PR]?\d+\])/).map((piece, i) => {
+            const m = /^\[([PR]?\d+)\]$/.exec(piece);
+            const citation = m ? byId.get(m[1]) : undefined;
             return citation ? (
               <CitationChip key={i} citation={citation} />
             ) : (

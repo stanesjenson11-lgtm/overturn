@@ -40,7 +40,9 @@ export type KeyTerm = { field: string; label: string; value: string; page: numbe
 export type Case = { id: string; title: string | null };
 
 export type Citation = {
-  id: number;
+  id: string; // "P3" for the user's documents, "R2" for a regulation
+  source: "policy" | "regulation";
+  document: string | null;
   chunkId: string;
   heading: string | null;
   pageStart: number;
@@ -48,4 +50,19 @@ export type Citation = {
   text: string;
 };
 
-export type Msg = { id: string; role: string; content: string; citations: Citation[] | null };
+export type Verdict = {
+  verdict: "challengeable" | "valid" | "needs_info";
+  summary: string;
+  grounds: { point: string; cites: string[] }[];
+};
+
+export type Question = { id: string; text: string; type: "date" | "choice" | "text"; options?: string[] };
+export type Questionnaire = { intro?: string; questions: Question[] };
+
+export type Msg = {
+  id: string;
+  role: string;
+  content: string;
+  citations: Citation[] | null;
+  meta?: { verdict?: Verdict; questionnaire?: Questionnaire } | null;
+};
