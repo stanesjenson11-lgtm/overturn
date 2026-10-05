@@ -51,6 +51,12 @@ describe("withRetry", () => {
     expect(f.calls()).toBe(1);
   });
 
+  it("retries a transient 500 from the server", async () => {
+    const f = flaky([Object.assign(new Error("Internal error encountered."), { status: 500 })]);
+    await expect(withRetry(f.fn)).resolves.toBe("ok");
+    expect(f.calls()).toBe(2);
+  });
+
   it("does not retry errors a retry can't fix", async () => {
     const f = flaky([Object.assign(new Error("bad request"), { status: 400 })]);
     await expect(withRetry(f.fn)).rejects.toThrow("bad request");

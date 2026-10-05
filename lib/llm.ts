@@ -36,8 +36,9 @@ export function setGenAI(c: GoogleGenAI | undefined): void {
 }
 
 /**
- * Gemini's free tier returns 503 UNAVAILABLE under load; it's transient, not
- * our bug, so retry it with backoff.
+ * Gemini's free tier returns 503 UNAVAILABLE under load, and the Gemma models
+ * answer 500 INTERNAL now and then; both are transient on Google's side, not
+ * our bug, so retry them with backoff.
  *
  * 429 gets exactly one retry, after the delay the API itself asks for. One
  * question spends four or five calls, and the free tier allows 5 requests a
@@ -73,7 +74,7 @@ export async function withRetry<T>(fn: () => Promise<T>, tries = 3): Promise<T> 
         await sleep(wait);
         continue;
       }
-      if (status !== 503 || attempt >= tries) throw err;
+      if ((status !== 503 && status !== 500) || attempt >= tries) throw err;
       await sleep(500 * 2 ** attempt);
     }
   }

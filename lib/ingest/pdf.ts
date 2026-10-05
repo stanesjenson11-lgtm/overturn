@@ -133,7 +133,7 @@ async function transcribePages(
   } catch (e) {
     console.error("transcription failed:", e);
     // The raw API error is a JSON blob; the user reads documents.error.
-    throw new Error("Couldn't reach the model to read this scan. Try uploading it again.");
+    throw new Error("Couldn't reach the model to read this scan. Try uploading it again.", { cause: e });
   }
 
   onUsage({

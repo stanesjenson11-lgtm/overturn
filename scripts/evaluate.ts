@@ -19,7 +19,7 @@ import {
 } from "@/lib/db/queries";
 import { ingest } from "@/lib/ingest";
 import { extractKeyTerms } from "@/lib/ingest/terms";
-import { ANSWER_MODEL, genAI, withRetry } from "@/lib/llm";
+import { genAI, withRetry } from "@/lib/llm";
 import type { Citation } from "@/lib/rag/types";
 import { rejectionLetter, renderPdf, SHIELD_POLICY, type LetterFields } from "./fixtures";
 
@@ -83,6 +83,11 @@ const policy = await ensure("policy", "shield-policy", SHIELD_POLICY);
 
 // ------------------------------------------------------------------ judge
 
+// Not the agent's model family, so it isn't grading itself; and not the answer
+// model, whose free tier allows 20 requests a day: 16 judge calls a night
+// would leave nothing for anything else. Each model has its own daily quota.
+const JUDGE_MODEL = "gemini-3.8-flash";
+
 const Judgement = z.object({ grounded: z.boolean(), reason: z.string() });
 
 async function judge(answer: string, citations: Citation[]) {
@@ -91,7 +96,7 @@ async function judge(answer: string, citations: Citation[]) {
     .join("\n\n");
   const res = await withRetry(() =>
     genAI().models.generateContent({
-      model: ANSWER_MODEL,
+      model: JUDGE_MODEL,
       contents: `Passages:\n${passages}\n\nAnswer:\n${answer}`,
       config: {
         systemInstruction:
@@ -230,7 +235,7 @@ const rows = [
   ["Missed-rights rate", pct(challengeable.filter((r) => r.got === "valid").length, challengeable.length), `challengeable rejections called valid (of ${challengeable.length})`],
   ["Citation validity", pct(results.filter((r) => r.citesValid).length, results.length), "every [P]/[R] opens onto a passage it was given"],
   ["Cites the regulator", pct(decidedChallengeable.filter((r) => r.citesRegulation).length, decidedChallengeable.length), "challengeable verdicts backed by an IRDAI passage"],
-  ["Groundedness", pct(results.filter((r) => r.grounded).length, results.length), `LLM-as-judge, ${ANSWER_MODEL}`],
+  ["Groundedness", pct(results.filter((r) => r.grounded).length, results.length), `LLM-as-judge, ${JUDGE_MODEL}`],
   ["Key-terms accuracy", pct(termHits, termTotal), `${termTotal} fields from the policy and a letter`],
   ["Median review", `${(median(results.map((r) => r.ms)) / 1000).toFixed(1)}s, ${median(results.map((r) => r.steps))} steps`, "agent wall clock and tool calls"],
 ];
