@@ -131,10 +131,21 @@ describe("the agent loop", () => {
       [call("check_rules", { rule: "moratorium", coverageStart: "2019-03-01", admissionDate: "2025-10-02" })],
       [{ text: "Done." }],
     ]);
-    await run();
+    await run("Review this. My cover started on 2019-03-01 and I was admitted on 02/10/2025.");
 
     expect(responsesIn(requests[1])[0].error).toMatch(/YYYY-MM-DD/);
     expect(responsesIn(requests[2])[0]).toMatchObject({ rule: "moratorium", holds: true, months: 79 });
+  });
+
+  it("refuses a rule input nobody stated, like a start date guessed from a policy number", async () => {
+    const requests = scripted([
+      [call("check_rules", { rule: "moratorium", coverageStart: "2019-01-01", admissionDate: "2025-10-02" })],
+      [{ text: "Done." }],
+    ]);
+    const done = (await run("Review this. Policy SH/IND/2019/118230; admitted 02/10/2025.")).at(-1);
+
+    expect(responsesIn(requests[1])[0].error).toMatch(/coverageStart 2019-01-01: not stated/);
+    expect(done.checks).toEqual([]); // nothing was decided on a guess
   });
 
   it("stops and hands back control when it asks the user something", async () => {
@@ -239,5 +250,16 @@ describe("the agent loop", () => {
     scripted([], { throws: true });
     const events = await run();
     expect(events.at(-1)).toMatchObject({ type: "error", message: expect.stringMatching(/try sending it again/) });
+  });
+});
+
+describe("what counts as a stated date", () => {
+  it("accepts the ways people write a date, and refuses a bare year", async () => {
+    const { mentioned } = await import("@/lib/agent");
+    expect(mentioned("2019-03-01", "cover since 2019-03-01")).toBe(true);
+    expect(mentioned("2019-03-01", "Policy start: 01/03/2019")).toBe(true);
+    expect(mentioned("2019-03-01", "started 1/3/2019")).toBe(true);
+    expect(mentioned("2019-03-01", "I've been covered since March 2019")).toBe(true);
+    expect(mentioned("2019-03-01", "Policy Number: SH/IND/2019/118230")).toBe(false);
   });
 });

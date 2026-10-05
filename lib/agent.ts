@@ -4,7 +4,7 @@ import { addUsage, AGENT_MODEL, genAI, withRetry, type Usage } from "./llm";
 import { rerank } from "./rag/rerank";
 import { hybridSearch, searchRegulations } from "./rag/search";
 import type { Citation, Clause, Span } from "./rag/types";
-import { RULES, type RuleResult } from "./rules";
+import { citesPolicyTerms, RULES, type RuleResult } from "./rules";
 import { listClauses } from "./db/queries";
 
 /**
@@ -62,7 +62,7 @@ HOW TO WORK
 3. search_policy for the clause the insurer relied on, and for anything that cuts the other way: definitions, exceptions, waiting periods, the moratorium.
 4. search_regulations for the rule that governs that kind of rejection.
 5. Every date or duration question goes to check_rules: the moratorium, the pre-existing-disease, specific-disease and initial waiting periods, and renewal gaps. Never work out months or days yourself. Pass dates as YYYY-MM-DD; the documents use DD/MM/YYYY.
-6. Facts the policyholder has already stated in their messages (when cover started, whether it was an accident, what they declared, renewal dates) and facts the letter states (admission and diagnosis dates) are inputs: pass them to check_rules. Only if a fact that would change the answer is still missing, call ask_questionnaire with just those questions. Use type "date" for dates.
+6. Facts the policyholder has already stated in their messages (when cover started, whether it was an accident, what they declared, renewal dates) and facts the letter states (admission and diagnosis dates) are inputs: pass them to check_rules ("it wasn't an accident" is accident: false). Never infer a fact nobody stated, such as a start date from the year in a policy number. Only if a fact that would change the answer is still missing, call ask_questionnaire with just those questions. Use type "date" for dates.
 7. When asked to review the rejection, finish with record_verdict. For any other question, answer in text.
 8. If the question isn't about this claim, the policy or the rules, say so in one sentence without calling any tool.
 
@@ -237,6 +237,38 @@ const factsBlock = (facts: { letter: KeyTerm[]; policy: KeyTerm[] }) => {
 
 type ToolOutcome = { response: Record<string, unknown>; exit?: "verdict" | "questionnaire"; note?: string };
 
+const DATE_ARGS = [
+  "coverageStart",
+  "admissionDate",
+  "diagnosisDate",
+  "sumInsuredEnhancedOn",
+  "renewalDue",
+  "renewalPaid",
+] as const;
+
+const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+
+/**
+ * Whether an ISO date appears in the text in any way people write dates:
+ * 2019-03-01, 01/03/2019, 1/3/2019, 01-03-2019, or "March 2019" (a month
+ * and year is a statement; a bare year is not).
+ */
+export function mentioned(iso: string, text: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return false;
+  const [, y, mo, d] = m;
+  const t = text.toLowerCase();
+  const month = MONTHS[Number(mo) - 1];
+  return [
+    iso,
+    `${d}/${mo}/${y}`,
+    `${Number(d)}/${Number(mo)}/${y}`,
+    `${d}-${mo}-${y}`,
+    `${month} ${y}`,
+    `${month.slice(0, 3)} ${y}`,
+  ].some((s) => t.includes(s));
+}
+
 export async function* reviewCase(opts: {
   userId: string;
   documentIds: string[];
@@ -257,6 +289,17 @@ export async function* reviewCase(opts: {
   const cited = new Map<string, Citation>();
   const byChunk = new Map<string, string>();
   const counters = { P: 0, R: 0 };
+
+  // What a rule input may come from: the policyholder's own words (never the
+  // agent's earlier replies, which could carry a guess forward), the facts
+  // extracted from their documents, and every passage retrieved so far.
+  const evidence = () =>
+    [
+      opts.question,
+      ...opts.history.filter((t) => t.role === "user").map((t) => t.content),
+      ...(opts.facts ? [...opts.facts.letter, ...opts.facts.policy].map((f) => f.value) : []),
+      ...[...cited.values()].map((c) => c.text),
+    ].join("\n");
   const checks: RuleResult[] = [];
   let verdict: Verdict | undefined;
   let questionnaire: Questionnaire | undefined;
@@ -315,6 +358,25 @@ export async function* reviewCase(opts: {
       const rule = args.rule as keyof typeof RULES;
       if (!Object.hasOwn(RULES, rule))
         return { response: { error: `Unknown rule. Use one of: ${Object.keys(RULES).join(", ")}.` } };
+      // Tool inputs are grounded like extracted facts are: a date must have
+      // been stated by the policyholder or appear in the documents' text. A
+      // start date "inferred" from the year in a policy number is exactly
+      // the confident guess the rules engine exists to keep out.
+      // Well-formed dates only: a malformed one falls through to the rule,
+      // whose "use YYYY-MM-DD" error is the more useful thing to hear first.
+      const unstated = DATE_ARGS.filter(
+        (k) =>
+          typeof args[k] === "string" &&
+          /^\d{4}-\d{2}-\d{2}$/.test(args[k] as string) &&
+          !mentioned(args[k] as string, evidence()),
+      );
+      if (unstated.length)
+        return {
+          response: {
+            error: `${unstated.map((k) => `${k} ${args[k]}`).join(", ")}: not stated by the policyholder or in the documents. Don't infer it; ask with ask_questionnaire.`,
+          },
+          note: `${String(rule)} refused: unstated ${unstated.join(", ")}`,
+        };
       try {
         const result = (RULES[rule] as (f: object) => RuleResult)(args);
         checks.push(result);
@@ -404,11 +466,20 @@ export async function* reviewCase(opts: {
     }
     if (opts.review) {
       const t = Date.now();
-      const reason = ["reason", "clauses_cited"]
-        .map((f) => opts.facts?.letter.find((x) => x.field === f)?.value)
-        .filter(Boolean)
-        .join(" ");
-      const query = reason || opts.question;
+      const letterFact = (f: string) => opts.facts?.letter.find((x) => x.field === f)?.value;
+
+      // What the letter itself owes is checkable in code from its extracted
+      // facts, so it isn't left to the model to remember. Only when
+      // extraction ran: no facts at all proves nothing about the letter.
+      let failing = "";
+      if (opts.facts?.letter.length) {
+        const cites = citesPolicyTerms({ clausesCited: letterFact("clauses_cited") ? [letterFact("clauses_cited")!] : [] });
+        checks.push(cites);
+        briefing += `CHECKED IN CODE:\n- ${cites.rule}: ${cites.finding} (${cites.source})\n\n`;
+        if (!cites.holds) failing = cites.finding;
+      }
+
+      const query = [letterFact("reason"), letterFact("clauses_cited"), failing].filter(Boolean).join(" ") || opts.question;
       const { clauses } = await searchRegulations(query);
       const kept = await rerank(query, clauses, 3);
       usage = addUsage(usage, kept.usage);

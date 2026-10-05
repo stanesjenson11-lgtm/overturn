@@ -14,7 +14,8 @@ export const UTILITY_MODEL = "gemini-3.1-flash-lite";
  * is carried by the rules engine and the retrieved text, not by the model's
  * own knowledge; the eval measures whether that holds.
  */
-export const AGENT_MODEL = UTILITY_MODEL;
+// Overridable so the eval can compare candidates without a code change.
+export const AGENT_MODEL = process.env.AGENT_MODEL || UTILITY_MODEL;
 
 /**
  * Reads scanned documents (rejection letters usually arrive as scans).
