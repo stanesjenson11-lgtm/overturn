@@ -6,9 +6,11 @@
   --color-line: #dcdfe5;
   --color-ink: #1b1c1f;
   --color-muted: #6d7178;
-  --color-accent: #f97316;
-  --color-accent-ink: #fff8f2;
-  --color-accent-soft: #ffe7ce;
+  /* A deep signal orange (#c63d00). It still passes AA both ways: white
+     on it is 4.98:1, and as text on the page it's 4.57:1. */
+  --color-accent: #c63d00;
+  --color-accent-ink: #fffaf5;
+  --color-accent-soft: #fdeee6;
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
@@ -34,9 +36,11 @@
     --color-line: #2b2c30;
     --color-ink: #f1f1f3;
     --color-muted: #8b8d94;
-    --color-accent: #fb923c;
+    /* The brighter signal orange (#fd6324): on a dark page it reads better
+       than the deep one, which drops to 3.4:1 there. */
+    --color-accent: #fd6324;
     --color-accent-ink: #1a0f04;
-    --color-accent-soft: #3a2411;
+    --color-accent-soft: #3a1d10;
   }
 
   :root {

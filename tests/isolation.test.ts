@@ -7,7 +7,6 @@ import { GET as listCasesRoute, POST as newCase } from "@/app/api/cases/route";
 import { GET as getCaseRoute, DELETE as deleteCaseRoute } from "@/app/api/cases/[id]/route";
 import { POST as ask } from "@/app/api/cases/[id]/messages/route";
 import { GET as appeal } from "@/app/api/cases/[id]/appeal/route";
-import { GET as admin } from "@/app/api/admin/route";
 import {
   createCase,
   createDocument,
@@ -93,7 +92,6 @@ describe("an anonymous request", () => {
   it("cannot list documents or cases", async () => {
     expect((await listDocs(get("/api/documents"))).status).toBe(401);
     expect((await listCasesRoute(get("/api/cases"))).status).toBe(401);
-    expect((await admin(get("/api/admin"))).status).toBe(401);
   });
 
   it("cannot upload", async () => {
@@ -237,7 +235,6 @@ describe("every response", () => {
       await listDocs(get("/api/documents", A.cookie)),
       await listCasesRoute(get("/api/cases", A.cookie)),
       await getCaseRoute(get(`/api/cases/${A.caseId}`, A.cookie), ctx(A.caseId)),
-      await admin(get("/api/admin", A.cookie)),
       // The 401 too: a stored "Not signed in." is a smaller problem than a
       // stored claim, but a stored 200 is the same code path.
       await listCasesRoute(get("/api/cases")),
@@ -287,7 +284,16 @@ describe("opening a new case", () => {
 
     const res = await newCase(post("/api/cases", {}, B.cookie));
     expect(res.status).toBe(201);
-    const fresh = (await res.json()) as { id: string };
+    const fresh = (await res.json()) as { id: string; title: string };
+
+    // Named as a draft, numbered past the cases B has. Another "New case" now
+    // sweeps this still-empty draft and may reuse its number, but no two live
+    // cases ever share a name.
+    expect(fresh.title).toMatch(/^Draft case \d+$/);
+    const titles = ((await (await listCasesRoute(get("/api/cases", B.cookie))).json()) as {
+      title: string;
+    }[]).map((c) => c.title);
+    expect(new Set(titles).size).toBe(titles.length);
 
     const mine = ((await (await listCasesRoute(get("/api/cases", B.cookie))).json()) as {
       id: string;

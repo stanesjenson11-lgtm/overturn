@@ -1,9 +1,10 @@
 import Link from "next/link";
+import Logo from "@/components/Logo";
 
 export default function Home() {
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col justify-center px-6 py-16">
-      <p className="text-sm uppercase tracking-[0.2em] text-muted">Overturn</p>
+      <Logo size="lg" />
 
       <h1 className="mt-4 font-serif text-4xl leading-tight sm:text-5xl">
         Your health insurance claim was rejected. Does the reason <em>hold up</em>?
@@ -37,6 +38,9 @@ export default function Home() {
         </Link>
         <Link href="/login" className="rounded-xl px-5 py-2.5 font-medium shadow-neu-sm transition hover:shadow-neu">
           Sign in
+        </Link>
+        <Link href="/guide" className="self-center px-2 text-sm font-medium text-accent underline-offset-2 hover:underline">
+          How it works
         </Link>
       </div>
 

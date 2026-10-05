@@ -13,7 +13,7 @@ import { COOKIE } from "@/lib/auth/session";
  * Guarding data here instead would put the whole tenancy boundary one matcher
  * typo away from a full leak.
  */
-export const config = { matcher: ["/cases/:path*", "/admin", "/login", "/register"] };
+export const config = { matcher: ["/cases/:path*", "/login", "/register"] };
 
 export async function middleware(req: NextRequest) {
   const token = req.cookies.get(COOKIE)?.value;
@@ -30,7 +30,7 @@ export async function middleware(req: NextRequest) {
   }
 
   const path = req.nextUrl.pathname;
-  if (!signedIn && (path.startsWith("/cases") || path === "/admin"))
+  if (!signedIn && path.startsWith("/cases"))
     return NextResponse.redirect(new URL("/login", req.url));
   if (signedIn && (path === "/login" || path === "/register"))
     return NextResponse.redirect(new URL("/cases", req.url));
@@ -39,7 +39,7 @@ export async function middleware(req: NextRequest) {
   // Signed-in screens must not survive a sign-out. Without no-store the back
   // button restores the previous account's case from the bfcache — fully
   // rendered, from memory, without a request the server could refuse.
-  if (path.startsWith("/cases") || path === "/admin")
+  if (path.startsWith("/cases"))
     res.headers.set("cache-control", "private, no-store");
   return res;
 }

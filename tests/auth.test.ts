@@ -74,7 +74,7 @@ describe("the auth round trip", () => {
     const whoami = await me(new Request("http://localhost/api", { headers: { cookie } }));
     expect(whoami.status).toBe(200);
 
-    expect((await register(jsonReq(creds))).status).toBe(400); // duplicate email
+    expect((await register(jsonReq(creds))).status).toBe(409); // duplicate email
     expect((await login(jsonReq({ ...creds, password: "wrong-password" }))).status).toBe(401);
     expect((await login(jsonReq(creds))).status).toBe(200);
 
@@ -82,13 +82,17 @@ describe("the auth round trip", () => {
     expect(out.headers.get("set-cookie")).toContain("Max-Age=0");
   });
 
-  it("gives the same answer whether or not the account exists", async () => {
+  it("tells a missing account from a wrong password, so the form can offer sign-up", async () => {
+    // A deliberate product choice (see the login route): registration already
+    // reveals whether an email exists, so a vague login message hid nothing.
     const missing = await login(jsonReq({ email: "nobody@example.com", password: "not-a-real-one" }));
     const wrong = await login(jsonReq({ ...creds, password: "also-not-real" }));
-    expect(missing.status).toBe(401);
-    // Same status and same wording: the response must not be an oracle for
-    // which addresses are registered.
-    expect(await missing.json()).toEqual(await wrong.json());
+    expect(missing.status).toBe(404);
+    expect((await missing.json()).error).toMatch(/no account/i);
+    expect(wrong.status).toBe(401);
+    // And neither one sets a session.
+    expect(missing.headers.get("set-cookie")).toBeNull();
+    expect(wrong.headers.get("set-cookie")).toBeNull();
   });
 
   it("refuses a short password", async () => {

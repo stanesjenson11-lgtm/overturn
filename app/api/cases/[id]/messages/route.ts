@@ -2,6 +2,7 @@ import { z } from "zod";
 import { after } from "next/server";
 import { session } from "@/lib/auth/session";
 import {
+  DRAFT_TITLE,
   getCase,
   insertMessage,
   insertTrace,
@@ -48,9 +49,9 @@ export const POST = route(async (req: Request, ctx: Ctx) => {
   }));
 
   await insertMessage(userId, id, "user", question);
-  if (!found.title) {
-    // A case is a claim, so the letter names it better than the first question
-    // does ("Review this rejection" titles every case the same).
+  if (!found.title || DRAFT_TITLE.test(found.title)) {
+    // A case is a claim, so the letter names it better than its draft name or
+    // the first question does ("Review this rejection" titles every case alike).
     const [insurer, claim] = ["insurer", "claim_number"].map(
       (f) => facts.letter.find((t) => t.field === f)?.value,
     );

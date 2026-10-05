@@ -313,6 +313,9 @@ export type Case = {
   created_at: string;
 };
 
+/** A new case's name ("Draft case 3") until its first review names it after the claim. */
+export const DRAFT_TITLE = /^Draft case \d+$/;
+
 export async function createCase(userId: string, title: string | null) {
   const [c] = await tq<Case>(
     `INSERT INTO cases (user_id, title) VALUES ($1, $2)
@@ -452,12 +455,4 @@ export async function insertTrace(userId: string, caseId: string | null, spans: 
     caseId,
     JSON.stringify(spans),
   ]);
-}
-
-export async function listTraces(userId: string, limit = 50): Promise<Row[]> {
-  return tq(
-    `SELECT spans, created_at FROM traces
-      WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
-    [userId, limit],
-  );
 }

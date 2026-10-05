@@ -2,7 +2,7 @@ import { parseCredentials } from "@/lib/auth/credentials";
 import { hashPassword } from "@/lib/auth/password";
 import { sessionCookie, signSession } from "@/lib/auth/session";
 import { createUser } from "@/lib/db/queries";
-import { badRequest, route } from "@/lib/http";
+import { HttpError, route } from "@/lib/http";
 
 export const runtime = "nodejs"; // scrypt is node:crypto, not Web Crypto
 
@@ -16,7 +16,7 @@ export const POST = route(async (req: Request) => {
     // No pre-flight "does this email exist" check: it costs a round trip and
     // still races. The unique index is the real check, so let it be the check.
     if (/unique|duplicate/i.test(String(e)))
-      throw badRequest("That email is already registered.");
+      throw new HttpError(409, "That email is already registered.");
     throw e;
   }
 

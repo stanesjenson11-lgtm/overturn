@@ -15,7 +15,11 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `Request failed (${res.status})`);
+    // The status rides along, so a form can offer the right next step (no
+    // account: sign up; already registered: sign in) without parsing words.
+    throw Object.assign(new Error(body.error ?? `Request failed (${res.status})`), {
+      status: res.status,
+    });
   }
   return res.json() as Promise<T>;
 }

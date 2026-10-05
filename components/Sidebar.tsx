@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { api, post, type Case } from "@/lib/client";
+import Logo from "./Logo";
+import { PlusIcon } from "./UploadDropzone";
 
 /** CaseView fires this when an answer lands, so a fresh auto-title shows up
  *  without a reload. Cheaper than a store for the one thing that needs it. */
@@ -100,15 +102,16 @@ export default function Sidebar() {
 
   return (
     <aside className="flex h-dvh w-72 shrink-0 flex-col gap-5 overflow-y-auto border-r border-line bg-panel px-4 py-5">
-      <Link href="/cases" className="text-sm uppercase tracking-[0.2em] text-muted">
-        Overturn
+      <Link href="/cases" aria-label="Overturn: your cases">
+        <Logo />
       </Link>
 
       <button
         type="button"
         onClick={() => void newCase()}
-        className="rounded-xl bg-accent px-3 py-2.5 text-sm font-medium text-accent-ink shadow-neu-sm transition active:shadow-neu-inset-sm"
+        className="flex items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2.5 text-sm font-medium text-accent-ink shadow-neu-sm transition active:shadow-neu-inset-sm"
       >
+        <PlusIcon />
         New case
       </button>
 
@@ -128,7 +131,7 @@ export default function Sidebar() {
                     active ? "bg-accent text-accent-ink shadow-neu-sm" : "hover:shadow-neu-sm"
                   }`}
                 >
-                  {c.title ?? "New case"}
+                  {c.title ?? "Untitled case"}
                 </Link>
                 <DeleteButton what={c.title ?? "this case"} onDelete={() => removeCase(c.id)} />
               </li>
@@ -138,8 +141,8 @@ export default function Sidebar() {
       </section>
 
       <div className="flex items-center justify-between border-t border-line pt-3 text-xs">
-        <Link href="/admin" className="text-muted underline-offset-2 hover:underline">
-          Pipeline
+        <Link href="/guide" className="text-muted underline-offset-2 hover:underline">
+          How to use Overturn
         </Link>
         <button type="button" onClick={signOut} className="text-muted hover:underline">
           Sign out

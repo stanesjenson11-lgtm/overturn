@@ -16,5 +16,11 @@ export const POST = route(async (req: Request) => {
   // createCase so the case we are about to hand back is never a candidate.
   await deleteEmptyCases(userId);
 
-  return json(await createCase(userId, null), 201);
+  // Numbered after everything the user has, then bumped past any name still
+  // taken, so two drafts never share one.
+  const titles = new Set((await listCases(userId)).map((c) => c.title));
+  let n = titles.size + 1;
+  while (titles.has(`Draft case ${n}`)) n++;
+
+  return json(await createCase(userId, `Draft case ${n}`), 201);
 });

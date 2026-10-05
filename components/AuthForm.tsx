@@ -2,17 +2,33 @@
 
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { post } from "@/lib/client";
+import Logo from "./Logo";
+
+// Carries the typed email to the other form when the error suggests
+// switching. Session storage, never the URL: an email in a query string ends
+// up in history, referrers and server logs.
+const CARRY = "overturn:email";
 
 export default function AuthForm({ mode }: { mode: "login" | "register" }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; status?: number } | null>(null);
   const [busy, setBusy] = useState(false);
 
   const register = mode === "register";
+
+  useEffect(() => {
+    try {
+      const carried = sessionStorage.getItem(CARRY);
+      if (carried) setEmail(carried);
+      sessionStorage.removeItem(CARRY);
+    } catch {
+      // Storage blocked (private mode): the user types it again.
+    }
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -24,18 +40,37 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
       router.push("/cases");
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      setError({
+        message: err instanceof Error ? err.message : "Something went wrong.",
+        status: (err as { status?: number }).status,
+      });
       setBusy(false);
     }
   }
 
+  /** The other form, with the email already filled in. */
+  const switchTo = (href: string) => () => {
+    try {
+      sessionStorage.setItem(CARRY, email);
+    } catch {}
+    router.push(href);
+  };
+
+  // No account on sign-in, or already registered on sign-up: say what to do next.
+  const next =
+    !register && error?.status === 404
+      ? { label: "Create an account with this email", href: "/register" }
+      : register && error?.status === 409
+        ? { label: "Sign in instead", href: "/login" }
+        : null;
+
   return (
     <main className="flex min-h-dvh items-center justify-center px-6">
       <div className="w-full max-w-sm rounded-3xl p-8 shadow-neu">
-        <Link href="/" className="text-sm uppercase tracking-[0.2em] text-muted">
-          Overturn
+        <Link href="/" aria-label="Overturn home">
+          <Logo />
         </Link>
-        <h1 className="mt-3 font-serif text-3xl">
+        <h1 className="mt-6 font-serif text-3xl">
           {register ? "Create an account" : "Welcome back"}
         </h1>
 
@@ -69,9 +104,18 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
           </label>
 
           {error && (
-            <p role="alert" className="rounded-xl bg-accent-soft px-3 py-2 text-sm text-accent shadow-neu-inset-sm">
-              {error}
-            </p>
+            <div role="alert" className="rounded-xl bg-accent-soft px-3 py-2 text-sm text-accent shadow-neu-inset-sm">
+              <p>{error.message}</p>
+              {next && (
+                <button
+                  type="button"
+                  onClick={switchTo(next.href)}
+                  className="mt-1 font-medium underline underline-offset-2"
+                >
+                  {next.label} →
+                </button>
+              )}
+            </div>
           )}
 
           <button
@@ -85,9 +129,13 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
 
         <p className="mt-6 text-sm text-muted">
           {register ? "Already have an account? " : "No account yet? "}
-          <Link href={register ? "/login" : "/register"} className="font-medium text-accent">
+          <button
+            type="button"
+            onClick={switchTo(register ? "/login" : "/register")}
+            className="font-medium text-accent"
+          >
             {register ? "Sign in" : "Create one"}
-          </Link>
+          </button>
         </p>
       </div>
     </main>
