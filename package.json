@@ -14,7 +14,8 @@
     "eval": "tsx scripts/evaluate.ts",
     "mcp": "tsx scripts/mcp.ts",
     "ingest-regulations": "tsx scripts/ingest-regulations.ts",
-    "scan-bench": "tsx scripts/scan-bench.ts"
+    "scan-bench": "tsx scripts/scan-bench.ts",
+    "samples": "tsx scripts/samples.ts"
   },
   "dependencies": {
     "@google/genai": "^2.18.0",
