@@ -16,6 +16,30 @@ export const EMBED_DIM = 768;
 // bigger batches buy nothing — keep them modest and predictable.
 const BATCH = 32;
 
+/**
+ * The free tier embeds 100 texts a minute, counted per text, not per batch
+ * call. A 60-page policy wording chunks into more clauses than that, and a
+ * blind retry lands in the same exhausted minute (the API's own retryDelay
+ * says "58ms" at the window's edge). So embed() paces itself: once this
+ * minute's allowance is spent, wait for the next one. Uploads have a 300s
+ * budget to spend on that; a query embeds one text and never waits.
+ *
+ * ponytail: in-process window, so concurrent serverless instances can still
+ * collide (withRetry absorbs one 429). A paid key lifts the limit; raise
+ * EMBED_PER_MINUTE and this never sleeps.
+ */
+export const EMBED_PER_MINUTE = 100;
+let minute = { start: 0, used: 0 };
+
+async function pace(n: number) {
+  if (Date.now() - minute.start >= 60_000) minute = { start: Date.now(), used: 0 };
+  if (minute.used + n > EMBED_PER_MINUTE) {
+    await new Promise((r) => setTimeout(r, minute.start + 60_000 - Date.now() + 500));
+    minute = { start: Date.now(), used: 0 };
+  }
+  minute.used += n;
+}
+
 export async function embed(
   texts: string[],
   taskType: "RETRIEVAL_DOCUMENT" | "RETRIEVAL_QUERY",
@@ -24,6 +48,7 @@ export async function embed(
 
   for (let i = 0; i < texts.length; i += BATCH) {
     const batch = texts.slice(i, i + BATCH);
+    await pace(batch.length);
     const res = await withRetry(() =>
       genAI().models.embedContent({
         model: EMBED_MODEL,

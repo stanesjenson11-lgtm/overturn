@@ -1,4 +1,10 @@
-import { denseSearch, keywordSearch } from "../db/queries";
+import {
+  denseSearch,
+  keywordSearch,
+  regDenseSearch,
+  regKeywordSearch,
+  type RegClause,
+} from "../db/queries";
 import { embed } from "./embed";
 import { rrf } from "./rrf";
 import type { Clause } from "./types";
@@ -29,6 +35,24 @@ export async function hybridSearch(
 
   // RRF discards scores by design, so the one absolute signal (how close the
   // nearest clause is at all) is read off the dense list before fusion.
+  return { clauses: rrf([dense, keyword], limit), topScore: Number(dense[0]?.score ?? 0) };
+}
+
+/**
+ * The same hybrid over the public regulations: IRDAI's rules, which a
+ * rejection is checked against. A sibling rather than a flag on hybridSearch,
+ * because the tenant version's SQL must always carry user_id and this one has
+ * none to carry. Keeping them apart keeps that visible.
+ */
+export async function searchRegulations(
+  query: string,
+  limit = 25,
+): Promise<{ clauses: RegClause[]; topScore: number }> {
+  const [vector] = await embed([query], "RETRIEVAL_QUERY");
+  const [dense, keyword] = await Promise.all([
+    regDenseSearch(vector, limit),
+    regKeywordSearch(query, limit),
+  ]);
   return { clauses: rrf([dense, keyword], limit), topScore: Number(dense[0]?.score ?? 0) };
 }
 

@@ -243,6 +243,58 @@ export async function keywordSearch(
   );
 }
 
+// ---------------------------------------------------------- regulations
+// Public text with no tenant, so raw() rather than tq(): there is no user_id
+// to filter on, and adding one would be a lie about who owns the rows. Only
+// scripts/ingest-regulations.ts writes here.
+
+export type RegClause = Retrieved & { title: string };
+
+export async function replaceRegulation(
+  source: string,
+  title: string,
+  chunks: ChunkInput[],
+) {
+  // Delete-then-insert, so re-running the ingest after IRDAI revises a
+  // document leaves exactly one copy of it.
+  await raw(`DELETE FROM reg_chunks WHERE source = $1`, [source]);
+  const params: unknown[] = [source, title];
+  const values = chunks.map((c) => {
+    const i = params.length;
+    params.push(c.ordinal, c.headingPath, c.pageStart, c.pageEnd, c.content, toVector(c.embedding));
+    return `($1, $2, $${i + 1}, $${i + 2}, $${i + 3}, $${i + 4}, $${i + 5}, $${i + 6}::vector)`;
+  });
+  if (!values.length) return;
+  await raw(
+    `INSERT INTO reg_chunks
+       (source, title, ordinal, heading_path, page_start, page_end, content, embedding)
+     VALUES ${values.join(", ")}`,
+    params,
+  );
+}
+
+export async function regDenseSearch(embedding: number[], limit: number) {
+  return raw<RegClause & { score: number }>(
+    `SELECT 'r' || id AS id, title, content, heading_path, page_start, page_end,
+            1 - (embedding <=> $1::vector) AS score
+       FROM reg_chunks
+      ORDER BY embedding <=> $1::vector
+      LIMIT $2`,
+    [toVector(embedding), limit],
+  );
+}
+
+export async function regKeywordSearch(query: string, limit: number) {
+  return raw<RegClause>(
+    `SELECT 'r' || id AS id, title, content, heading_path, page_start, page_end
+       FROM reg_chunks
+      WHERE tsv @@ plainto_tsquery('english', $1)
+      ORDER BY ts_rank_cd(tsv, plainto_tsquery('english', $1)) DESC
+      LIMIT $2`,
+    [query, limit],
+  );
+}
+
 // ---------------------------------------------------------------- cases
 
 export type Case = {

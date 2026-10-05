@@ -13,7 +13,8 @@
     "seed": "tsx scripts/seed.ts",
     "eval": "tsx scripts/evaluate.ts",
     "calibrate": "tsx scripts/calibrate.ts",
-    "mcp": "tsx scripts/mcp.ts"
+    "mcp": "tsx scripts/mcp.ts",
+    "ingest-regulations": "tsx scripts/ingest-regulations.ts"
   },
   "dependencies": {
     "@google/genai": "^2.18.0",

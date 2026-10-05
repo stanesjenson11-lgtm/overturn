@@ -82,7 +82,26 @@ CREATE TABLE IF NOT EXISTS traces (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- Public regulations: IRDAI circulars and rules every case is checked
+-- against. Deliberately NOT a tenant table: there is no user_id because the
+-- rows belong to nobody, and nothing a user uploads can land here (only
+-- scripts/ingest-regulations.ts writes to it). Tenant data never moves the
+-- other way either; the two corpora are fused only inside the agent.
+CREATE TABLE IF NOT EXISTS reg_chunks (
+  id           bigserial PRIMARY KEY,
+  source       text NOT NULL,
+  title        text NOT NULL,
+  ordinal      int  NOT NULL,
+  heading_path text,
+  page_start   int,
+  page_end     int,
+  content      text NOT NULL,
+  embedding    vector(768) NOT NULL,
+  tsv          tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED
+);
+
 CREATE INDEX IF NOT EXISTS chunks_tenant_idx  ON chunks (user_id, document_id);
+CREATE INDEX IF NOT EXISTS reg_chunks_tsv_idx ON reg_chunks USING gin (tsv);
 CREATE INDEX IF NOT EXISTS chunks_tsv_idx     ON chunks USING gin (tsv);
 CREATE INDEX IF NOT EXISTS cases_user_idx     ON cases (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS documents_case_idx ON documents (user_id, case_id);
@@ -94,3 +113,4 @@ CREATE INDEX IF NOT EXISTS traces_user_idx    ON traces (user_id, created_at DES
 -- nowhere else — a sequential scan over one tenant's chunks is correct, just
 -- slower, and correctness never depends on an index existing.
 CREATE INDEX IF NOT EXISTS chunks_hnsw_idx ON chunks USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS reg_chunks_hnsw_idx ON reg_chunks USING hnsw (embedding vector_cosine_ops);
