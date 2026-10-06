@@ -1,3 +1,4 @@
+import IdleTimeout from "@/components/IdleTimeout";
 import Sidebar from "@/components/Sidebar";
 
 export default function CasesLayout({ children }: { children: React.ReactNode }) {
@@ -5,6 +6,7 @@ export default function CasesLayout({ children }: { children: React.ReactNode })
     <div className="flex">
       <Sidebar />
       {children}
+      <IdleTimeout />
     </div>
   );
 }

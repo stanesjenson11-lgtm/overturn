@@ -26,7 +26,7 @@ declare global {
   }
 }
 
-export default function AuthForm({ mode }: { mode: "login" | "register" }) {
+export default function AuthForm({ mode, notice }: { mode: "login" | "register"; notice?: string }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -115,6 +115,7 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
         <h1 className="mt-6 font-serif text-3xl">
           {register ? "Create an account" : "Welcome back"}
         </h1>
+        {notice && <p className="mt-3 text-sm text-muted">{notice}</p>}
 
         <form onSubmit={submit} className="mt-8 space-y-4">
           <label className="block">

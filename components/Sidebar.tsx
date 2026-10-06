@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, post, type Case } from "@/lib/client";
 import Logo from "./Logo";
 import { PlusIcon } from "./AttachMenu";
+import { broadcastSignOut } from "./IdleTimeout";
 
 /** CaseView fires this when an answer lands, so a fresh auto-title shows up
  *  without a reload. Cheaper than a store for the one thing that needs it. */
@@ -96,6 +97,7 @@ export default function Sidebar() {
 
   async function signOut() {
     await post("/api/auth/logout", {});
+    broadcastSignOut();
     router.push("/login");
     router.refresh();
   }

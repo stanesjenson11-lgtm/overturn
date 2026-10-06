@@ -1,7 +1,10 @@
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import type { PGlite } from "@electric-sql/pglite";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
+import { decodeJwt } from "jose";
 import { COOKIE, readCookie, session, signSession } from "@/lib/auth/session";
+import { IDLE_SECONDS, PING_EVERY_SECONDS, remainingSeconds } from "@/lib/auth/idle";
+import { POST as refresh } from "@/app/api/auth/refresh/route";
 import { POST as register } from "@/app/api/auth/register/route";
 import { findUserById } from "@/lib/db/queries";
 import { CONSENT_VERSION } from "@/lib/legal";
@@ -124,5 +127,33 @@ describe("the auth round trip", () => {
     expect(header).toContain("Path=/");
     expect(header).toContain("HttpOnly");
     expect(header).toContain("SameSite=Lax");
+    // A browser-session cookie: never written to disk, gone when the browser closes.
+    expect(header).not.toMatch(/max-age|expires/i);
+  });
+});
+
+describe("idle sign-out", () => {
+  const userId = "11111111-1111-1111-1111-111111111111";
+
+  it("outlives the browser's idle timer by exactly one renewal interval", async () => {
+    const { iat, exp } = decodeJwt(await signSession(userId));
+    expect(exp! - iat!).toBe(IDLE_SECONDS + PING_EVERY_SECONDS);
+  });
+
+  it("refresh re-signs a live session and refuses a missing one", async () => {
+    const live = new Request("http://localhost/api", {
+      method: "POST",
+      headers: { cookie: `${COOKIE}=${await signSession(userId)}` },
+    });
+    const ok = await refresh(live);
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("set-cookie")).toMatch(new RegExp(`^${COOKIE}=[^;]+;`));
+
+    expect((await refresh(new Request("http://localhost/api", { method: "POST" }))).status).toBe(401);
+  });
+
+  it("counts down whole seconds from the last activity, stopping at zero", () => {
+    expect(remainingSeconds(0, 280_500)).toBe(20);
+    expect(remainingSeconds(0, 10 * 60_000)).toBe(0);
   });
 });

@@ -1,8 +1,15 @@
 import { SignJWT, jwtVerify } from "jose";
 import { unauthorized } from "../http";
+import { IDLE_SECONDS, PING_EVERY_SECONDS } from "./idle";
 
 export const COOKIE = "ls_session";
-const MAX_AGE = 60 * 60 * 24 * 7; // 7 days
+
+// The browser's idle timer signs you out after IDLE_SECONDS, but an active
+// browser renews the token at most once every PING_EVERY_SECONDS, so the token
+// has to outlive that timer by one ping interval or an active user could be
+// refused just before a renewal. If the tab is closed or JS is off, this
+// expiry is what signs them out: the server is the backstop, not the timer.
+const TOKEN_SECONDS = IDLE_SECONDS + PING_EVERY_SECONDS;
 
 function key(): Uint8Array {
   const secret = process.env.SESSION_SECRET;
@@ -16,7 +23,7 @@ export async function signSession(userId: string): Promise<string> {
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(userId)
     .setIssuedAt()
-    .setExpirationTime(`${MAX_AGE}s`)
+    .setExpirationTime(`${TOKEN_SECONDS}s`)
     .sign(key());
 }
 
@@ -29,10 +36,14 @@ export async function signSession(userId: string): Promise<string> {
  * existed to work around the deployment split. Same origin, so: SameSite=Lax
  * (which is also CSRF protection for the state-changing routes), httpOnly so no
  * script can read it, Secure everywhere except plain-http localhost.
+ *
+ * No Max-Age or Expires: a browser-session cookie, kept in memory rather than
+ * written to disk, so closing the browser signs you out and the next visit
+ * asks for the password again.
  */
 export function sessionCookie(jwt: string): string {
   const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
-  return `${COOKIE}=${jwt}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${MAX_AGE}${secure}`;
+  return `${COOKIE}=${jwt}; Path=/; HttpOnly; SameSite=Lax${secure}`;
 }
 
 export function clearedCookie(): string {
