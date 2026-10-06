@@ -252,6 +252,19 @@ limits):
 - **Sign-in is rate-limited and bot-checked** (Cloudflare Turnstile), limits
   live in Postgres as one atomic upsert, and uploads, questions and exports
   have per-user limits.
+- **Sign-in doesn't confirm who has an account.** A wrong email and a wrong
+  password get the same answer in the same time (an unknown email still costs
+  one scrypt). Passwords found in Have I Been Pwned's breach corpus are refused
+  at sign-up; only five hex characters of a SHA-1 leave the server.
+- **Sessions end when they should.** Every sign-in is a row in `sessions`, and
+  the cookie's token names it, so signing out, "sign out of all devices" and a
+  newer sign-in elsewhere take effect on the next request. Five idle minutes
+  (with a 30-second "Still there?" warning, shared across tabs) or twelve
+  hours sign you out; the cookie is `HttpOnly`, `SameSite=Lax` and lives only
+  until the browser closes ([lib/auth/session.ts](lib/auth/session.ts)).
+- **The password again before export or deletion,** rate-limited before the
+  hash is even checked, so an unlocked screen or a copied cookie can't take
+  the whole record or destroy it.
 - **Uploads are inspected, never kept.** PDFs carrying scripts, launch
   actions, attachments or encryption are refused (object streams decoded,
   names unescaped), and PNG decompression bombs are refused from the header.
@@ -260,8 +273,10 @@ limits):
   recorded with the notice version; [/privacy](app/privacy/page.tsx) itemises
   what is held and who processes it; users can download everything (JSON, or a
   case as PDF) and delete their account, which cascades through every table;
-  sign-ins and deletions are logged for a year.
-- **CSP, HSTS, nosniff, no framing**, and a production dependency audit in CI.
+  sign-ins, failed re-authentications, document uploads, deletions and
+  exports are logged for a year.
+- **CSP, HSTS, nosniff, no framing**, a production dependency audit in CI, and
+  Dependabot.
 
 ---
 
@@ -278,7 +293,7 @@ npm run dev
 
 | Command | |
 | --- | --- |
-| `npm test` | 198 tests, no external services (Postgres runs in-process via PGlite) |
+| `npm test` | 223 tests, no external services (Postgres runs in-process via PGlite) |
 | `npm run eval` | the 16 cases → `eval/results.md` (free tier; several minutes) |
 | `npm run scan-bench` | Gemma 4 vs Gemini on seeded scans → `eval/scan-results.md` |
 | `npm run ingest-regulations` | re-run after IRDAI revises a document; it replaces, never duplicates |

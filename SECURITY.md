@@ -14,15 +14,21 @@ them, what to do when something goes wrong, and where the protection stops.
 | SQL injection | every value is a parameter; a test fails if anything but a `$n` placeholder is spliced into SQL | `lib/db/queries.ts`, `tests/tenant-guard.test.ts` |
 | Database leak (backup, console, read bug) | Neon disk encryption (AES-256) and TLS-only; messages, verdicts, titles, file names and key terms also sealed with AES-256-GCM under `DATA_KEY`, bound to their owner | `lib/crypto.ts` |
 | Password guessing, credential stuffing | rate limits per IP and per IP+email; Cloudflare Turnstile; scrypt hashes | `lib/limits.ts`, `lib/auth/turnstile.ts` |
+| Finding out who has an account | sign-in gives one answer, in the same time, for a wrong email and a wrong password (unknown emails are checked against a dummy scrypt hash) | `app/api/auth/login/route.ts` |
+| Breached passwords | refused at sign-up via Have I Been Pwned's range API (k-anonymity: five hex chars of the SHA-1 leave; fails open after 3 s) | `lib/auth/password.ts` |
+| Stolen or abandoned sessions | a `sessions` row per sign-in, named in the token; sign-out, "sign out of all devices" and a newer sign-in end it on the next request; 5 idle minutes (30-second warning, shared across tabs) or 12 hours sign you out; browser-session cookie | `lib/auth/session.ts`, `components/IdleTimeout.tsx` |
+| An unlocked screen taking or destroying the record | the password again before data export or account deletion, 5 tries per 15 minutes, counted before scrypt | `app/api/account/stepup.ts` |
 | Bots and cost abuse | Turnstile at sign-up; per-user limits on uploads, questions, exports; daily token cap | `lib/limits.ts` |
 | Malicious uploads | magic-byte type check, size and page caps; PDFs with scripts, launch actions, attachments or encryption refused (object streams decoded); PNG decompression bombs refused from the header; the original file is never stored or served | `lib/ingest/pdf.ts` |
 | XSS, clickjacking, downgrade | no `dangerouslySetInnerHTML`; CSP (no foreign scripts but Turnstile, `frame-ancestors 'none'`, `object-src 'none'`); HSTS; nosniff | `next.config.ts` |
 | CSRF | the session cookie is `SameSite=Lax`, `HttpOnly`, `Secure` | `lib/auth/session.ts` |
 | Cached private responses | `private, no-store` and `Vary: Cookie` on every API response | `lib/http.ts` |
-| Vulnerable dependencies | `npm audit --omit=dev --audit-level=high` in CI | `.github/workflows/ci.yml` |
+| Vulnerable dependencies | `npm audit --omit=dev --audit-level=high` in CI; Dependabot weekly | `.github/workflows/ci.yml`, `.github/dependabot.yml` |
 
-`security_log` records sign-ins (and failures), sign-ups, data exports and
-account deletions with time and IP, kept a year (DPDP Rules 2025, rule 6).
+`security_log` records sign-ins (and failures), sign-ups, replaced sessions,
+"sign out of all devices", failed password re-checks, document uploads and
+deletions, case deletions and exports, data exports and account deletions,
+with time and IP, kept a year (DPDP Rules 2025, rule 6).
 
 ## If there's a breach (DPDP Rules 2025, rule 7)
 
@@ -39,7 +45,8 @@ account deletions with time and IP, kept a year (DPDP Rules 2025, rule 6).
 ## Rotating keys
 
 - **`SESSION_SECRET`:** replace it in Vercel and redeploy. Everyone is signed
-  out; nothing is lost.
+  out; nothing is lost. (For one account, "sign out of all devices" does the
+  same without a deploy.)
 - **`TURNSTILE_SECRET_KEY`:** rotate in the Cloudflare dashboard, update Vercel.
 - **`DATA_KEY`:** don't just replace it: every sealed row becomes unreadable.
   Values carry a version prefix (`v1:`) for this. Add the new key as `v2` in
@@ -53,10 +60,13 @@ account deletions with time and IP, kept a year (DPDP Rules 2025, rule 6).
   by Neon's disk encryption only: Postgres has to read them to search them.
   Sealing them means a stored, stripped `tsvector` and an eval run to confirm
   retrieval still holds.
-- **Sessions are 7-day JWTs.** Sign-out clears the cookie, but a copied token
-  stays valid until it expires; rotating `SESSION_SECRET` is the kill switch.
-  Server-side revocation would cost a database read on every request.
-- **No password reset**: that needs an email service.
+- **Sign-up still says "That email is already registered."** Closing that
+  needs email verification, which needs an email service.
+- **No password reset and no two-factor sign-in**, for the same reason and by
+  choice.
+- **A browser that restores its session on restart** can reopen signed in if
+  that happens within about six minutes of the last activity; after that the
+  token has expired.
 - **The CSP allows inline scripts**, because Next's bootstrap needs a nonce
   otherwise. Nothing renders untrusted HTML; move to a nonce CSP if that
   changes.
