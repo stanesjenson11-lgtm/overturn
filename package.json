@@ -33,7 +33,7 @@
     "@electric-sql/pglite": "^0.3.0",
     "@napi-rs/canvas": "^1.0.10",
     "@tailwindcss/postcss": "^4.0.0",
-    "@types/node": "^22.10.0",
+    "@types/node": "^26.6.4",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "dotenv": "^16.4.0",
