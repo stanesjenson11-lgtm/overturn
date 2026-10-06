@@ -1,4 +1,5 @@
 import { session, sessionCookie, signSession } from "@/lib/auth/session";
+import { touchSession } from "@/lib/db/queries";
 import { route } from "@/lib/http";
 
 /**
@@ -7,9 +8,10 @@ import { route } from "@/lib/http";
  * 401, and the browser treats that as signed out.
  */
 export const POST = route(async (req: Request) => {
-  const { userId } = await session(req);
+  const { userId, sessionId } = await session(req);
+  await touchSession(userId, sessionId);
   return Response.json(
     { ok: true },
-    { headers: { "set-cookie": sessionCookie(await signSession(userId)) } },
+    { headers: { "set-cookie": sessionCookie(await signSession(userId, sessionId)) } },
   );
 });

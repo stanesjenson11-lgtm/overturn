@@ -53,6 +53,50 @@ export async function deleteUser(id: string) {
   return rows.length > 0;
 }
 
+// ------------------------------------------------------------- sessions
+// One row per sign-in; the JWT carries its id. Every statement is scoped by
+// user_id as well as id, so a session id alone never selects anything.
+
+export async function createSession(userId: string) {
+  const [s] = await raw<{ id: string }>(
+    `INSERT INTO sessions (user_id) VALUES ($1) RETURNING id`,
+    [userId],
+  );
+  return s.id;
+}
+
+export async function findSession(userId: string, id: string) {
+  const [s] = await raw<{ created_at: Date | string; ended_reason: string | null }>(
+    `SELECT created_at, ended_reason FROM sessions WHERE id = $1 AND user_id = $2`,
+    [id, userId],
+  );
+  return s;
+}
+
+export async function touchSession(userId: string, id: string) {
+  await raw(`UPDATE sessions SET last_seen = now() WHERE id = $1 AND user_id = $2`, [id, userId]);
+}
+
+export async function endSession(userId: string, id: string, reason: string) {
+  await raw(
+    `UPDATE sessions SET ended_reason = $3
+     WHERE id = $1 AND user_id = $2 AND ended_reason IS NULL`,
+    [id, userId, reason],
+  );
+}
+
+/** Ends every live session of this user except `keep` (null: all of them).
+ *  Returns how many it ended. */
+export async function endSessions(userId: string, reason: string, keep: string | null) {
+  const rows = await raw<{ id: string }>(
+    `UPDATE sessions SET ended_reason = $2
+     WHERE user_id = $1 AND ended_reason IS NULL AND id IS DISTINCT FROM $3
+     RETURNING id`,
+    [userId, reason, keep],
+  );
+  return rows.length;
+}
+
 // ------------------------------------------------------------ documents
 
 export const DOC_KINDS = ["policy", "rejection", "medical"] as const;

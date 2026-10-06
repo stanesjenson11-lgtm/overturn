@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { jwtVerify } from "jose";
-import { COOKIE } from "@/lib/auth/session";
+import { COOKIE } from "@/lib/auth/cookie";
 
 /**
  * Redirects only. This is NOT the authorization boundary.
@@ -19,6 +19,9 @@ export async function middleware(req: NextRequest) {
   const token = req.cookies.get(COOKIE)?.value;
   const secret = process.env.SESSION_SECRET;
 
+  // Signature and expiry only: the edge has no database, so a token whose
+  // session row was ended still looks signed in here. session() refuses it on
+  // the first API call, and the browser goes to /login from there.
   let signedIn = false;
   if (token && secret) {
     try {

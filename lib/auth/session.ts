@@ -1,8 +1,10 @@
 import { SignJWT, jwtVerify } from "jose";
+import { findSession } from "../db/queries";
 import { unauthorized } from "../http";
-import { IDLE_SECONDS, PING_EVERY_SECONDS } from "./idle";
+import { COOKIE } from "./cookie";
+import { IDLE_SECONDS, MAX_SESSION_SECONDS, PING_EVERY_SECONDS, SIGNED_IN_ELSEWHERE } from "./idle";
 
-export const COOKIE = "ls_session";
+export { COOKIE };
 
 // The browser's idle timer signs you out after IDLE_SECONDS, but an active
 // browser renews the token at most once every PING_EVERY_SECONDS, so the token
@@ -18,10 +20,13 @@ function key(): Uint8Array {
   return new TextEncoder().encode(secret);
 }
 
-export async function signSession(userId: string): Promise<string> {
+/** `sessionId` is the user's row in `sessions` (from createSession), carried
+ *  as the standard jti claim. */
+export async function signSession(userId: string, sessionId: string): Promise<string> {
   return new SignJWT({})
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(userId)
+    .setJti(sessionId)
     .setIssuedAt()
     .setExpirationTime(`${TOKEN_SECONDS}s`)
     .sign(key());
@@ -70,16 +75,29 @@ export function readCookie(req: Request, name: string): string | undefined {
  * function returns; it never decides which tenant that is. Every query that
  * consumes such an id also carries `user_id = $1` from here, so an id belonging
  * to someone else matches zero rows and the route 404s.
+ *
+ * A valid signature is necessary, not sufficient: the token also names its
+ * row in `sessions` (jti), and that row must exist for this same user, not be
+ * ended (signed out, signed out everywhere, or replaced by a newer sign-in),
+ * and be younger than MAX_SESSION_SECONDS. A token from before server-side
+ * sessions has no jti and is refused; its owner signs in again.
  */
-export async function session(req: Request): Promise<{ userId: string }> {
+export async function session(req: Request): Promise<{ userId: string; sessionId: string }> {
   const jwt = readCookie(req, COOKIE);
   if (!jwt) throw unauthorized();
+  let userId: string | undefined, sessionId: string | undefined;
   try {
     const { payload } = await jwtVerify(jwt, key());
-    if (!payload.sub) throw unauthorized();
-    return { userId: payload.sub };
+    ({ sub: userId, jti: sessionId } = payload);
   } catch {
     // Expired, tampered, or signed with a rotated secret — all the same to us.
-    throw unauthorized("Session expired.");
   }
+  if (!userId || !sessionId) throw unauthorized("Session expired.");
+
+  const row = await findSession(userId, sessionId);
+  if (row?.ended_reason === "replaced") throw unauthorized(SIGNED_IN_ELSEWHERE);
+  if (!row || row.ended_reason) throw unauthorized("Session expired.");
+  if (Date.now() - new Date(row.created_at).getTime() > MAX_SESSION_SECONDS * 1000)
+    throw unauthorized("Session expired.");
+  return { userId, sessionId };
 }

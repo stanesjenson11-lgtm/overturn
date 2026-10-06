@@ -98,13 +98,9 @@ export default function AuthForm({ mode, notice }: { mode: "login" | "register";
     router.push(href);
   };
 
-  // No account on sign-in, or already registered on sign-up: say what to do next.
-  const next =
-    !register && error?.status === 404
-      ? { label: "Create an account with this email", href: "/register" }
-      : register && error?.status === 409
-        ? { label: "Sign in instead", href: "/login" }
-        : null;
+  // Already registered on sign-up: offer sign-in. Sign-in has no counterpart:
+  // it no longer says whether an account exists (see the login route).
+  const next = register && error?.status === 409 ? { label: "Sign in instead", href: "/login" } : null;
 
   return (
     <main className="flex min-h-dvh items-center justify-center px-6">

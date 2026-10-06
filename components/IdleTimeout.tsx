@@ -1,13 +1,24 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { PING_EVERY_SECONDS, WARN_SECONDS, remainingSeconds } from "@/lib/auth/idle";
+import { PING_EVERY_SECONDS, SIGNED_IN_ELSEWHERE, WARN_SECONDS, remainingSeconds } from "@/lib/auth/idle";
 import { post } from "@/lib/client";
 
 // Shared by every tab: working in one keeps the others signed in, and signing
 // out of one signs out all of them.
 const ACTIVITY = "overturn:lastActivity";
 const SIGNED_OUT = "overturn:signedOut";
+
+// Why a tab is leaving, and where that sends it. The login page explains the
+// last two. "elsewhere" is a newer sign-in on another browser or device,
+// which ends this session (one active session per account).
+type Why = "out" | "expired" | "ended" | "elsewhere";
+const LANDING: Record<Why, string> = {
+  out: "/login",
+  expired: "/login?expired=1",
+  ended: "/login?ended=1",
+  elsewhere: "/login?ended=elsewhere",
+};
 
 // Keys count, not just the mouse: someone typing a long message without
 // touching the mouse is not idle. Scroll is listened for in the capture phase,
@@ -57,21 +68,22 @@ export default function IdleTimeout() {
     write(ACTIVITY, String(now));
   };
 
-  const leave = async (expired: boolean, broadcast = true) => {
+  const leave = async (why: Why, broadcast = true) => {
     if (leaving.current) return;
     leaving.current = true;
     // A renewal landing after the logout would set the cookie right back.
     await inflight.current;
     await post("/api/auth/logout", {}).catch(() => {});
-    if (broadcast) write(SIGNED_OUT, `${expired ? "expired" : "out"} ${Date.now()}`);
+    if (broadcast) write(SIGNED_OUT, `${why} ${Date.now()}`);
     // A full load, not a client-side push: nothing signed-in stays in memory.
-    window.location.replace(expired ? "/login?expired=1" : "/login");
+    window.location.replace(LANDING[why]);
   };
 
   const ping = () => {
     pinged.current = Date.now();
-    inflight.current = post("/api/auth/refresh", {}).catch((e: { status?: number }) => {
-      if (e.status === 401) void leave(true);
+    inflight.current = post("/api/auth/refresh", {}).catch((e: { status?: number; message?: string }) => {
+      // Not "expired": this tab wasn't idle, so the server ended it (12-hour cap, signed out elsewhere).
+      if (e.status === 401) void leave(e.message === SIGNED_IN_ELSEWHERE ? "elsewhere" : "ended");
       // Anything else (offline, a blip): the next minute tries again.
     });
   };
@@ -101,7 +113,7 @@ export default function IdleTimeout() {
       const last = Math.max(own.current, shared.current);
       const now = Date.now();
       const r = remainingSeconds(last, now);
-      if (r <= 0) return void leave(true);
+      if (r <= 0) return void leave("expired");
       setLeft(r <= WARN_SECONDS ? r : null);
       // Renew only after real activity, and at most once a minute.
       if (r > WARN_SECONDS && last > pinged.current && now - pinged.current >= PING_EVERY_SECONDS * 1000)
@@ -109,7 +121,10 @@ export default function IdleTimeout() {
     };
 
     const onStorage = (e: StorageEvent) => {
-      if (e.key === SIGNED_OUT && e.newValue) void leave(e.newValue.startsWith("expired"), false);
+      if (e.key === SIGNED_OUT && e.newValue) {
+        const why = e.newValue.split(" ")[0] as Why;
+        void leave(Object.hasOwn(LANDING, why) ? why : "out", false);
+      }
     };
 
     const opts = { capture: true, passive: true };
@@ -163,7 +178,7 @@ export default function IdleTimeout() {
       <div className="mt-6 flex flex-wrap justify-end gap-3">
         <button
           type="button"
-          onClick={() => void leave(false)}
+          onClick={() => void leave("out")}
           className="rounded-xl px-4 py-2.5 text-sm font-medium shadow-neu-sm transition active:shadow-neu-inset-sm"
         >
           Sign out

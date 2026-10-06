@@ -138,6 +138,23 @@ CREATE TABLE IF NOT EXISTS security_log (
   ip      text
 );
 
+-- One row per sign-in. The cookie's JWT names its row (jti), and session()
+-- refuses a token whose row is missing or ended, so signing out, signing out
+-- everywhere, and a newer sign-in elsewhere all take effect on the very next
+-- request instead of when the token happens to expire. ended_reason says why
+-- ('signed_out', 'signed_out_everywhere', 'replaced'), so a browser that was
+-- bumped can be told it was bumped.
+-- ponytail: ended rows are never purged; one small row per sign-in. Add a
+-- DELETE to purgeExpired() if the table ever matters.
+CREATE TABLE IF NOT EXISTS sessions (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      uuid NOT NULL REFERENCES users ON DELETE CASCADE,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  last_seen    timestamptz NOT NULL DEFAULT now(),
+  ended_reason text
+);
+
+CREATE INDEX IF NOT EXISTS sessions_user_idx  ON sessions (user_id);
 CREATE INDEX IF NOT EXISTS chunks_tenant_idx  ON chunks (user_id, document_id);
 CREATE INDEX IF NOT EXISTS reg_chunks_tsv_idx ON reg_chunks USING gin (tsv);
 CREATE INDEX IF NOT EXISTS chunks_tsv_idx     ON chunks USING gin (tsv);

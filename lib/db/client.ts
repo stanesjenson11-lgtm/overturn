@@ -29,7 +29,7 @@ export class TenancyViolation extends Error {
 /** Tables whose rows belong to exactly one user. `users` is not one of them:
  *  a user row *is* the tenant, and is looked up by id or email. */
 const TENANT_TABLE =
-  /\b(?:from|join|into|update)\s+(documents|chunks|cases|messages|usage|traces)\b/i;
+  /\b(?:from|join|into|update)\s+(documents|chunks|cases|messages|usage|traces|sessions)\b/i;
 
 /**
  * Returns a description of the violation, or null if the statement is safe.

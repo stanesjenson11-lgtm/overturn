@@ -1,8 +1,8 @@
 import { parseCredentials } from "@/lib/auth/credentials";
-import { hashPassword } from "@/lib/auth/password";
+import { hashPassword, isPwned } from "@/lib/auth/password";
 import { sessionCookie, signSession } from "@/lib/auth/session";
 import { verifyTurnstile } from "@/lib/auth/turnstile";
-import { createUser, logSecurityEvent } from "@/lib/db/queries";
+import { createSession, createUser, logSecurityEvent } from "@/lib/db/queries";
 import { badRequest, HttpError, route } from "@/lib/http";
 import { CONSENT_VERSION } from "@/lib/legal";
 import { clientIp, rateLimit } from "@/lib/limits";
@@ -20,6 +20,9 @@ export const POST = route(async (req: Request) => {
   const ip = clientIp(req);
   await rateLimit(`register:ip:${ip}`, 5, 60 * 60);
   await verifyTurnstile(body?.turnstileToken, ip);
+  // After the bot check, so a flood doesn't spend our calls to the breach list.
+  if (await isPwned(password))
+    throw badRequest("This password has appeared in a data breach. Please choose a different one.");
 
   let user;
   try {
@@ -27,14 +30,16 @@ export const POST = route(async (req: Request) => {
   } catch (e) {
     // No pre-flight "does this email exist" check: it costs a round trip and
     // still races. The unique index is the real check, so let it be the check.
+    // ponytail: this 409 still reveals a registered email; closing it needs email verification.
     if (/unique|duplicate/i.test(String(e)))
       throw new HttpError(409, "That email is already registered.");
     throw e;
   }
 
   await logSecurityEvent("register", user.id, ip);
+  const sessionId = await createSession(user.id);
   return Response.json(
     { id: user.id, email: user.email },
-    { status: 201, headers: { "set-cookie": sessionCookie(await signSession(user.id)) } },
+    { status: 201, headers: { "set-cookie": sessionCookie(await signSession(user.id, sessionId)) } },
   );
 });

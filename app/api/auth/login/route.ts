@@ -1,24 +1,26 @@
 import { parseCredentials } from "@/lib/auth/credentials";
-import { verifyPassword } from "@/lib/auth/password";
+import { DUMMY_HASH, verifyPassword } from "@/lib/auth/password";
 import { sessionCookie, signSession } from "@/lib/auth/session";
 import { verifyTurnstile } from "@/lib/auth/turnstile";
-import { findUserByEmail, logSecurityEvent } from "@/lib/db/queries";
-import { notFound, route, unauthorized } from "@/lib/http";
+import { createSession, endSessions, findUserByEmail, logSecurityEvent } from "@/lib/db/queries";
+import { route, unauthorized } from "@/lib/http";
 import { clientIp, rateLimit } from "@/lib/limits";
 
 export const runtime = "nodejs";
 
 /**
- * Says which of the two things went wrong, so the form can offer the right
- * next step: no account means "create one", a wrong password means "try
- * again". This does tell a caller whether an email is registered, but
- * registering already did ("That email is already registered"), so a vague
- * login message protected nothing. Guessing at scale is what actually
- * matters, and that's what the rate limits and the bot check below are for.
+ * One answer for "no such account" and "wrong password", in the same status,
+ * words and time (an unknown email is checked against DUMMY_HASH, one full
+ * scrypt, just like a real one), so sign-in doesn't confirm which emails are
+ * registered.
  *
  * Order: the cheap limits first (one upsert each), then Turnstile (a network
  * call), then scrypt (deliberately slow), so a flood is refused before it
  * costs anything.
+ *
+ * One active session per user: a successful sign-in ends every other one
+ * (ended_reason 'replaced'). No prompt; the newest sign-in wins, and the other
+ * browser learns it on its next request (session() answers SIGNED_IN_ELSEWHERE).
  */
 export const POST = route(async (req: Request) => {
   const body = await req.json();
@@ -31,15 +33,20 @@ export const POST = route(async (req: Request) => {
   await verifyTurnstile(body?.turnstileToken, ip);
 
   const user = await findUserByEmail(email);
-  if (!user) throw notFound("There's no account with this email.");
-  if (!(await verifyPassword(password, user.password_hash))) {
-    await logSecurityEvent("login_failed", user.id, ip);
-    throw unauthorized("That password isn't right.");
+  const ok = await verifyPassword(password, user?.password_hash ?? DUMMY_HASH);
+  if (!user || !ok) {
+    await logSecurityEvent("login_failed", user?.id ?? null, ip);
+    throw unauthorized("Email or password is incorrect.");
   }
 
+  // Create first, then end the rest: two sign-ins racing can at worst end each
+  // other, never leave two sessions alive.
+  const sessionId = await createSession(user.id);
+  if ((await endSessions(user.id, "replaced", sessionId)) > 0)
+    await logSecurityEvent("session_replaced", user.id, ip);
   await logSecurityEvent("login", user.id, ip);
   return Response.json(
     { id: user.id, email: user.email },
-    { headers: { "set-cookie": sessionCookie(await signSession(user.id)) } },
+    { headers: { "set-cookie": sessionCookie(await signSession(user.id, sessionId)) } },
   );
 });
