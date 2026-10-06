@@ -28,6 +28,9 @@ const MIN_CHARS_PER_PAGE = 120;
 const SCAN_ERROR =
   "This PDF has no selectable text and the scan couldn't be read. Try a clearer scan.";
 
+const SCAN_LIMIT =
+  "Reading scans has hit today's limit. Try again tomorrow, or upload a PDF with selectable text.";
+
 /** Photos of one document, taken page by page: one upload, one PDF. Within
  *  MAX_SCANNED_PAGES, since every photo is a page the model transcribes. */
 export const MAX_PHOTOS = 10;
@@ -235,6 +238,8 @@ async function transcribePages(
     );
   } catch (e) {
     console.error("transcription failed:", e);
+    // A 429 here means withFallback walked every model and all are out for the day.
+    if ((e as { status?: number })?.status === 429) throw badRequest(SCAN_LIMIT);
     // The raw API error is a JSON blob; the user reads documents.error.
     throw new Error("Couldn't reach the model to read this scan. Try uploading it again.", { cause: e });
   }
