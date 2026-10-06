@@ -19,7 +19,7 @@ jobs:
     env:
       READY: ${{ secrets.DATABASE_URL != '' && secrets.GOOGLE_API_KEY != '' && secrets.DATA_KEY != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: env.READY == 'true'
       - uses: actions/setup-node@v4
         if: env.READY == 'true'
