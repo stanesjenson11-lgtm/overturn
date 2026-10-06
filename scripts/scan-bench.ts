@@ -5,7 +5,7 @@ import { required } from "./env";
 import { chunkPages } from "@/lib/ingest/chunk";
 import { extractPages } from "@/lib/ingest/pdf";
 import { extractKeyTerms } from "@/lib/ingest/terms";
-import type { Usage } from "@/lib/llm";
+import { setFallback, type Usage } from "@/lib/llm";
 import { cer } from "./cer";
 import { GARDEN_FLAT, MAPLE_COURT, renderPdf, renderScan, SHIELD_POLICY, SHIELD_REJECTION } from "./fixtures";
 
@@ -25,6 +25,7 @@ import { GARDEN_FLAT, MAPLE_COURT, renderPdf, renderScan, SHIELD_POLICY, SHIELD_
  */
 required("GOOGLE_API_KEY");
 process.env.RETRY_429_MAX_S ??= "65";
+setFallback(false); // each row has to be the model it names
 
 // Not gemini-3.7-flash: its free tier allows 20 requests a day per project,
 // which disqualifies it as the scan reader for a public app before quality is

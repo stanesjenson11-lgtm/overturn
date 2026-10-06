@@ -1,6 +1,6 @@
 import { FunctionCallingConfigMode, Type, type Content, type FunctionDeclaration, type Part } from "@google/genai";
 import type { KeyTerm } from "./ingest/terms";
-import { addUsage, AGENT_MODEL, genAI, withRetry, type Usage } from "./llm";
+import { addUsage, AGENT_MODEL, genAI, withFallback, type Usage } from "./llm";
 import { rerank } from "./rag/rerank";
 import { hybridSearch, searchRegulations } from "./rag/search";
 import type { Citation, Clause, Span } from "./rag/types";
@@ -495,9 +495,9 @@ export async function* reviewCase(opts: {
 
     for (let step = 0; step < MAX_STEPS; step++) {
       const t = Date.now();
-      const res = await withRetry(() =>
+      const res = await withFallback(AGENT_MODEL, (model) =>
         genAI().models.generateContent({
-          model: AGENT_MODEL,
+          model,
           contents,
           config: {
             systemInstruction: AGENT_SYSTEM,

@@ -1,5 +1,5 @@
 import { ThinkingLevel, Type, type Schema } from "@google/genai";
-import { genAI, UTILITY_MODEL, withRetry, type Usage } from "../llm";
+import { genAI, UTILITY_MODEL, withFallback, type Usage } from "../llm";
 
 /**
  * Hand-written Gemini schemas, not a Zod→JSON-Schema translator.
@@ -42,9 +42,9 @@ const toUsage = (u?: { promptTokenCount?: number; candidatesTokenCount?: number 
  * JSON — so callers fail soft instead of throwing into the pipeline.
  */
 export async function structured<T>(system: string, prompt: string, schema: Schema) {
-  const res = await withRetry(() =>
+  const res = await withFallback(UTILITY_MODEL, (model) =>
     genAI().models.generateContent({
-      model: UTILITY_MODEL,
+      model,
       contents: prompt,
       config: {
         systemInstruction: system,

@@ -91,6 +91,30 @@ export async function withRetry<T>(fn: () => Promise<T>, tries = 3): Promise<T> 
   }
 }
 
+// The two lite models are fast; Gemma 4 31B is as accurate but ~4x slower, so last.
+export const FALLBACK_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemma-4-31b-it"];
+
+let fallback = true;
+
+/** Off in scripts that compare named models: a silent swap would corrupt their numbers. */
+export const setFallback = (on: boolean) => {
+  fallback = on;
+};
+
+/** Free-tier quota is per model per day: when one model is out (429) or overloaded (503 after retries), the next one answers. */
+export async function withFallback<T>(first: string, fn: (model: string) => Promise<T>): Promise<T> {
+  const models = fallback ? [first, ...FALLBACK_MODELS.filter((m) => m !== first)] : [first];
+  for (let i = 0; ; i++) {
+    try {
+      return await withRetry(() => fn(models[i]));
+    } catch (err) {
+      const status = (err as { status?: number })?.status;
+      if ((status !== 429 && status !== 503) || i === models.length - 1) throw err;
+      console.warn(`${models[i]} answered ${status}; falling back to ${models[i + 1]}`);
+    }
+  }
+}
+
 export type Usage = { in: number; out: number };
 
 export const addUsage = (a: Usage, b: Partial<Usage>): Usage => ({

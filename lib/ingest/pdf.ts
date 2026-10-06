@@ -2,7 +2,7 @@ import { PDFArray, PDFDict, PDFDocument, PDFName, PDFStream, type PDFObject } fr
 import { Type, type Schema } from "@google/genai";
 import { extractText } from "unpdf";
 import { badRequest } from "../http";
-import { genAI, SCAN_MODEL, withRetry, type Usage } from "../llm";
+import { genAI, SCAN_MODEL, withFallback, type Usage } from "../llm";
 
 export type Page = { number: number; text: string };
 
@@ -212,7 +212,7 @@ async function transcribePages(
 ): Promise<Page[]> {
   let res;
   try {
-    res = await withRetry(() =>
+    res = await withFallback(model, (model) =>
       genAI().models.generateContent({
         model,
         contents: [

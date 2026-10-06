@@ -1,5 +1,5 @@
 import { ThinkingLevel } from "@google/genai";
-import { genAI, UTILITY_MODEL, withRetry } from "../llm";
+import { genAI, UTILITY_MODEL, withFallback } from "../llm";
 
 /**
  * Case titles, for when the rejection letter gave no insurer or claim number
@@ -8,9 +8,9 @@ import { genAI, UTILITY_MODEL, withRetry } from "../llm";
  */
 export async function titleFor(question: string): Promise<string> {
   try {
-    const res = await withRetry(() =>
+    const res = await withFallback(UTILITY_MODEL, (model) =>
       genAI().models.generateContent({
-        model: UTILITY_MODEL,
+        model,
         contents: question,
         config: {
           systemInstruction:

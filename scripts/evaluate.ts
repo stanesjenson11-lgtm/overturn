@@ -20,7 +20,7 @@ import {
 import { ingest } from "@/lib/ingest";
 import { CONSENT_VERSION } from "@/lib/legal";
 import { extractKeyTerms } from "@/lib/ingest/terms";
-import { genAI, withRetry } from "@/lib/llm";
+import { genAI, setFallback, withRetry } from "@/lib/llm";
 import type { Citation } from "@/lib/rag/types";
 import type { RuleResult } from "@/lib/rules";
 import { rejectionLetter, renderPdf, SHIELD_POLICY, type LetterFields } from "./fixtures";
@@ -46,6 +46,7 @@ required("DATA_KEY");
 // A chat request can't wait out a per-minute quota window; this script can,
 // and a 429 scored as a wrong answer would corrupt every number below.
 process.env.RETRY_429_MAX_S ??= "65";
+setFallback(false); // AGENT_MODEL is the candidate under test; a quiet swap scores a different one
 const UPSTREAM_TRIES = 3;
 const EMAIL = process.argv[2] ?? "eval@overturn.app";
 const REVIEW = "Review this rejection: does the reason the insurer gave hold up?";
