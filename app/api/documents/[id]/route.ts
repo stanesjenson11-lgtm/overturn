@@ -1,6 +1,7 @@
 import { session } from "@/lib/auth/session";
-import { countChunks, deleteDocument, getDocument } from "@/lib/db/queries";
+import { countChunks, deleteDocument, getDocument, logSecurityEvent } from "@/lib/db/queries";
 import { json, notFound, route } from "@/lib/http";
+import { clientIp } from "@/lib/limits";
 
 export const runtime = "nodejs";
 
@@ -23,5 +24,6 @@ export const DELETE = route(async (req: Request, ctx: Ctx) => {
   const { userId } = await session(req);
   const { id } = await ctx.params;
   if (!(await deleteDocument(userId, id))) throw notFound();
+  await logSecurityEvent(`document_deleted:${id}`, userId, clientIp(req)).catch(console.error);
   return json({ ok: true });
 });

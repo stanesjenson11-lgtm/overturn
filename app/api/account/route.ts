@@ -1,8 +1,8 @@
-import { verifyPassword } from "@/lib/auth/password";
 import { clearedCookie, session } from "@/lib/auth/session";
-import { deleteUser, findUserByEmail, findUserById, logSecurityEvent } from "@/lib/db/queries";
-import { HttpError, route, unauthorized } from "@/lib/http";
+import { deleteUser, logSecurityEvent } from "@/lib/db/queries";
+import { route } from "@/lib/http";
 import { clientIp, rateLimit } from "@/lib/limits";
+import { stepUp } from "./stepup";
 
 export const runtime = "nodejs";
 
@@ -15,14 +15,7 @@ export const runtime = "nodejs";
 export const DELETE = route(async (req: Request) => {
   const { userId } = await session(req);
   await rateLimit(`account:user:${userId}`, 5, 60 * 60);
-
-  const user = await findUserById(userId);
-  if (!user) throw unauthorized();
-  const { password } = ((await req.json().catch(() => ({}))) ?? {}) as { password?: unknown };
-  const full = await findUserByEmail(user.email);
-  // 403, not 401: the session is fine, and a 401 reads as "signed out".
-  if (typeof password !== "string" || !full || !(await verifyPassword(password, full.password_hash)))
-    throw new HttpError(403, "That password isn't right.");
+  await stepUp(req, userId);
 
   await deleteUser(userId);
   await logSecurityEvent("account_deleted", userId, clientIp(req));

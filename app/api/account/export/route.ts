@@ -1,13 +1,13 @@
 import { session } from "@/lib/auth/session";
 import {
-  findUserById,
   listCaseDocuments,
   listCases,
   listMessages,
   logSecurityEvent,
 } from "@/lib/db/queries";
-import { route, unauthorized } from "@/lib/http";
+import { route } from "@/lib/http";
 import { clientIp, rateLimit } from "@/lib/limits";
+import { stepUp } from "../stepup";
 
 export const runtime = "nodejs";
 
@@ -15,14 +15,13 @@ export const runtime = "nodejs";
  * Everything Overturn holds about you, as JSON (DPDP Act s.11, the right to
  * access): the account, every case, what was read from each document, and
  * every message with its citations and verdict. Not the documents' full text:
- * that's the file you uploaded, and you already have it.
+ * that's the file you uploaded, and you already have it. POST, because it
+ * carries the password: see stepUp.
  */
-export const GET = route(async (req: Request) => {
+export const POST = route(async (req: Request) => {
   const { userId } = await session(req);
   await rateLimit(`export:user:${userId}`, 5, 60 * 60);
-
-  const user = await findUserById(userId);
-  if (!user) throw unauthorized();
+  const user = await stepUp(req, userId);
 
   const cases = await Promise.all(
     (await listCases(userId)).map(async (c) => ({

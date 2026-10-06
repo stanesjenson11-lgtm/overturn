@@ -7,7 +7,7 @@ import { PDFDocument, PDFName, PDFString } from "pdf-lib";
 import { POST as register } from "@/app/api/auth/register/route";
 import { POST as login } from "@/app/api/auth/login/route";
 import { DELETE as deleteAccount } from "@/app/api/account/route";
-import { GET as exportAccount } from "@/app/api/account/export/route";
+import { POST as exportAccount } from "@/app/api/account/export/route";
 import { GET as exportCase } from "@/app/api/cases/[id]/export/route";
 import { verifyTurnstile } from "@/lib/auth/turnstile";
 import { open, seal } from "@/lib/crypto";
@@ -170,7 +170,7 @@ describe("your data", () => {
     const a = await actor("export-a@example.com");
     const b = await actor("export-b@example.com");
 
-    const json = await (await exportAccount(req("/api/account/export", { cookie: a.cookie }))).text();
+    const json = await (await exportAccount(req("/api/account/export", { body: { password: "a-long-password" }, cookie: a.cookie }))).text();
     expect(json).toContain("export-a@example.com claim");
     expect(json).toContain("diagnosis of export-a@example.com");
     expect(json).not.toContain("export-b@example.com");

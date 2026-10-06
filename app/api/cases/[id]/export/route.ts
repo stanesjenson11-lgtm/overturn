@@ -1,8 +1,8 @@
 import { session } from "@/lib/auth/session";
-import { getCase, listCaseDocuments, listMessages } from "@/lib/db/queries";
+import { getCase, listCaseDocuments, listMessages, logSecurityEvent } from "@/lib/db/queries";
 import { notFound, route } from "@/lib/http";
 import { renderPdf } from "@/lib/letter";
-import { rateLimit } from "@/lib/limits";
+import { clientIp, rateLimit } from "@/lib/limits";
 import type { Citation } from "@/lib/rag/types";
 
 export const runtime = "nodejs";
@@ -50,8 +50,10 @@ export const GET = route(async (req: Request, ctx: Ctx) => {
 
   out.push("", "", "Information from your documents and IRDAI's rules, not legal or medical advice.");
 
+  const pdf = await renderPdf(out.join("\n"));
+  await logSecurityEvent(`case_exported:${id}`, userId, clientIp(req)).catch(console.error);
   // A fixed filename: nothing the user typed reaches a response header.
-  return new Response((await renderPdf(out.join("\n"))) as BodyInit, {
+  return new Response(pdf as BodyInit, {
     headers: {
       "content-type": "application/pdf",
       "content-disposition": `attachment; filename="overturn-case-${today}.pdf"`,

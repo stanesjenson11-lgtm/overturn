@@ -7,11 +7,12 @@ import {
   getCase,
   listCaseDocuments,
   listDocuments,
+  logSecurityEvent,
 } from "@/lib/db/queries";
 import { ingest } from "@/lib/ingest";
 import { MAX_DOCS_PER_USER, toPdf } from "@/lib/ingest/pdf";
 import { badRequest, json, notFound, route } from "@/lib/http";
-import { assertWithinDailyLimit, rateLimit } from "@/lib/limits";
+import { assertWithinDailyLimit, clientIp, rateLimit } from "@/lib/limits";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -63,6 +64,9 @@ export const POST = route(async (req: Request) => {
   const name = files[0].name.replace(/\p{Cc}/gu, "").trim().slice(0, 160) || "document";
   const filename = files.length > 1 ? `${files.length} photos (${name}, …)` : name;
   const doc = await createDocument(userId, caseId, null, filename);
+  // The audit trail: the id only, never the name. A failed log line is not a
+  // reason to fail the upload.
+  await logSecurityEvent(`document_uploaded:${doc.id}`, userId, clientIp(req)).catch(console.error);
 
   // after() keeps the invocation alive past the response, so the client gets an
   // id to poll immediately instead of holding a request open for 30 seconds.
