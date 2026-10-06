@@ -1,4 +1,4 @@
-import { Type, type Schema } from "@google/genai";
+import { ThinkingLevel, Type, type Schema } from "@google/genai";
 import { genAI, UTILITY_MODEL, withRetry, type Usage } from "../llm";
 
 /**
@@ -50,7 +50,7 @@ export async function structured<T>(system: string, prompt: string, schema: Sche
         systemInstruction: system,
         responseMimeType: "application/json",
         responseSchema: schema,
-        thinkingConfig: { thinkingBudget: 0 }, // a scoring/classification call, not a reasoning one
+        thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL }, // a scoring/classification call, not a reasoning one
       },
     }),
   );

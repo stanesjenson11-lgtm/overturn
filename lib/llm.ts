@@ -5,7 +5,10 @@ import { GoogleGenAI } from "@google/genai";
  * eligible on Google AI Studio (no card on file) — Pro-tier models are not.
  */
 export const ANSWER_MODEL = "gemini-3.7-flash";
-export const UTILITY_MODEL = "gemini-3.1-flash-lite";
+// Free-tier quota is per model per day (500 for 3.1-flash-lite), so chat and
+// scans sit on different models and don't drain one allowance. 3.5 rejects
+// thinkingBudget; callers turn thinking down with thinkingLevel MINIMAL.
+export const UTILITY_MODEL = "gemini-3.5-flash-lite";
 
 /**
  * The agent loop's model. One review spends four to six calls, and the free
@@ -30,7 +33,7 @@ export const AGENT_MODEL = process.env.AGENT_MODEL || UTILITY_MODEL;
  * has to finish inside one upload. ponytail: re-run the bench before
  * switching; Gemma's free-API latency is the thing most likely to change.
  */
-export const SCAN_MODEL = UTILITY_MODEL;
+export const SCAN_MODEL = "gemini-3.1-flash-lite";
 
 let client: GoogleGenAI | undefined;
 

@@ -1,3 +1,4 @@
+import { ThinkingLevel } from "@google/genai";
 import { genAI, UTILITY_MODEL, withRetry } from "../llm";
 
 /**
@@ -14,7 +15,7 @@ export async function titleFor(question: string): Promise<string> {
         config: {
           systemInstruction:
             "Title this question about a health insurance claim in at most 8 words. No quotes, no trailing period, no preamble.",
-          thinkingConfig: { thinkingBudget: 0 },
+          thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
           maxOutputTokens: 40,
         },
       }),
